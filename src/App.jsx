@@ -22,7 +22,9 @@ import {
   query,
   where,
   orderBy,
-  serverTimestamp
+  serverTimestamp,
+  arrayUnion,
+  increment
 } from 'firebase/firestore';
 import {
   LayoutDashboard,
@@ -57,7 +59,8 @@ import {
   Twitter,
   FileText,
   CreditCard,
-  Home
+  Home,
+  Check
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -88,7 +91,6 @@ const getFirebaseConfig = () => {
   }
 
   // 2. Try Vite Environment Variables (This works for Vercel & Local .env)
-  // Note: We use a safe check here so it doesn't crash if import.meta is missing in some build tools
   try {
     // @ts-ignore
     if (import.meta.env && import.meta.env.VITE_FIREBASE_API_KEY) {
@@ -156,6 +158,7 @@ const TABS = {
 
 const STATUS = { OPEN: 'Open', IN_PROGRESS: 'In Progress', RESOLVED: 'Resolved', CLOSED: 'Closed' };
 const MEMBER_STATUS = { PENDING: 'pending', APPROVED: 'approved', REJECTED: 'rejected' };
+const PREDEFINED_AMENITIES = ["Gym", "Swimming Pool", "Club House", "Garden", "Tennis Court", "Badminton Court", "Community Hall", "Guest Parking", "Library"];
 
 // --- Reusable Components ---
 
@@ -196,7 +199,7 @@ const XIcon = ({ size = 24, className }) => (
   </svg>
 );
 
-// --- EXTRACTED APP WRAPPER ---
+// --- EXTRACTED APP WRAPPER (Fixes Input Focus Issue) ---
 const AppWrapper = ({ children, darkMode }) => (
   <div className={darkMode ? 'dark' : ''}>
     <div className="bg-gray-50 dark:bg-slate-900 min-h-screen text-gray-800 dark:text-gray-100 transition-colors duration-200">
@@ -561,10 +564,9 @@ export default function HumaraSocietyApp() {
   const [societyData, setSocietyData] = useState(null);
   const [activeTab, setActiveTab] = useState(TABS.DASHBOARD);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [showNotifications, setShowNotifications] = useState(false); // Notif State
+  const [showNotifications, setShowNotifications] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
 
-  // Modals state
   const [modalState, setModalState] = useState({ type: null, isOpen: false });
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState('login');
@@ -574,11 +576,9 @@ export default function HumaraSocietyApp() {
   const [profileError, setProfileError] = useState(null);
   const [showCompleteProfile, setShowCompleteProfile] = useState(false);
 
-  // Footer Modals State (Needed for LandingPage & inside app)
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [showContact, setShowContact] = useState(false);
 
-  // Form Data for Modals
   const [formData, setFormData] = useState({});
 
   const [notices, setNotices] = useState([]);
@@ -588,6 +588,7 @@ export default function HumaraSocietyApp() {
   const [bills, setBills] = useState([]);
   const [amenities, setAmenities] = useState([]);
   const [rentals, setRentals] = useState([]);
+  const [elections, setElections] = useState([]); // Elections
 
   // --- Init ---
   useEffect(() => {
@@ -659,6 +660,7 @@ export default function HumaraSocietyApp() {
     safeSub(query(collection(db, ...path, `bills_${sId}`), orderBy('dueDate', 'desc')), setBills);
     safeSub(collection(db, ...path, `amenities_${sId}`), setAmenities);
     safeSub(query(collection(db, ...path, `rentals_${sId}`), orderBy('createdAt', 'desc')), setRentals);
+    safeSub(query(collection(db, ...path, `elections_${sId}`), orderBy('createdAt', 'desc')), setElections);
 
     const profiles = collection(db, 'artifacts', appId, 'public', 'data', 'profiles');
     safeSub(query(profiles, where('societyId', '==', sId), where('status', '==', MEMBER_STATUS.APPROVED)), setMembers);
@@ -736,6 +738,31 @@ export default function HumaraSocietyApp() {
   const openModal = (type) => { setModalState({ type, isOpen: true }); setFormData({}); };
   const closeModal = () => setModalState({ type: null, isOpen: false });
 
+  const handleVote = async (electionId, candidateId) => {
+    const sId = userData.societyId;
+    const electionRef = doc(db, 'artifacts', appId, 'public', 'data', `elections_${sId}`, electionId);
+
+    // Check if user already voted
+    const electionDoc = await getDoc(electionRef);
+    if (electionDoc.data().voters.includes(user.uid)) {
+      alert("You have already voted!");
+      return;
+    }
+
+    const updatedCandidates = electionDoc.data().candidates.map(c => {
+      if (c.id === candidateId) {
+        return { ...c, votes: (c.votes || 0) + 1 };
+      }
+      return c;
+    });
+
+    await updateDoc(electionRef, {
+      candidates: updatedCandidates,
+      voters: arrayUnion(user.uid)
+    });
+    alert("Vote Casted Successfully!");
+  };
+
   const handleSubmitModal = async () => {
     const sId = userData.societyId;
     const path = ['artifacts', appId, 'public', 'data'];
@@ -757,6 +784,19 @@ export default function HumaraSocietyApp() {
         }
       } else if (modalState.type === 'rental') {
         await addDoc(collection(db, ...path, `rentals_${sId}`), { ...formData, ownerId: user.uid, ownerName: userData.fullName, contact: userData.email, createdAt: serverTimestamp() });
+      } else if (modalState.type === 'election') {
+        // Parse candidates
+        const candidates = formData.candidatesString.split(',').map((name, idx) => ({ id: idx, name: name.trim(), votes: 0 }));
+        await addDoc(collection(db, ...path, `elections_${sId}`), {
+          title: formData.title,
+          position: formData.position,
+          candidates: candidates,
+          voters: [],
+          status: 'Open',
+          createdAt: serverTimestamp()
+        });
+      } else if (modalState.type === 'amenity') {
+        await addDoc(collection(db, ...path, `amenities_${sId}`), formData);
       }
       closeModal();
     } catch (e) { alert("Error: " + e.message); }
@@ -991,13 +1031,79 @@ export default function HumaraSocietyApp() {
                   {pendingMembers.length === 0 && <p className="text-gray-500">No pending requests.</p>}
                 </div>
               )}
+
+              {activeTab === TABS.ELECTIONS && (
+                <div className="space-y-4 animate-fade-in">
+                  <div className="flex justify-between items-center">
+                    <h2 className="text-xl font-bold dark:text-white">Elections</h2>
+                    {isAdmin && <button className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2" onClick={() => openModal('election')}><Plus size={16} /> Create Election</button>}
+                  </div>
+                  {elections.length === 0 && <p className="text-gray-500">No active elections.</p>}
+                  {elections.map(election => (
+                    <div key={election.id} className="bg-white dark:bg-slate-800 p-6 rounded-xl border dark:border-slate-700 shadow-sm">
+                      <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-bold dark:text-white">{election.title} <span className="text-sm font-normal text-gray-500">({election.position})</span></h3>
+                        <Badge color={election.status === 'Open' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}>{election.status}</Badge>
+                      </div>
+
+                      <div className="space-y-3">
+                        {election.candidates.map(candidate => {
+                          const totalVotes = election.candidates.reduce((acc, c) => acc + (c.votes || 0), 0);
+                          const percentage = totalVotes > 0 ? ((candidate.votes || 0) / totalVotes) * 100 : 0;
+                          const hasVoted = election.voters.includes(user.uid);
+
+                          return (
+                            <div key={candidate.id} className="relative">
+                              <div className="flex justify-between text-sm mb-1">
+                                <span className="font-medium dark:text-white">{candidate.name}</span>
+                                {(hasVoted || election.status === 'Closed') && <span className="text-gray-500">{candidate.votes || 0} votes ({percentage.toFixed(1)}%)</span>}
+                              </div>
+                              <div className="w-full bg-gray-200 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
+                                <div className="bg-blue-600 h-2.5 rounded-full transition-all duration-500" style={{ width: `${percentage}%` }}></div>
+                              </div>
+                              {election.status === 'Open' && !hasVoted && (
+                                <button
+                                  onClick={() => handleVote(election.id, candidate.id)}
+                                  className="mt-2 text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1 rounded hover:bg-indigo-100 w-full"
+                                >
+                                  Vote
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {election.voters.includes(user.uid) && <p className="text-xs text-green-600 mt-4 flex items-center gap-1"><Check size={12} /> You have voted in this election.</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {activeTab === TABS.AMENITIES && (
+                <div className="space-y-4 animate-fade-in">
+                  <div className="flex justify-between items-center">
+                    <h2 className="text-xl font-bold dark:text-white">Amenities</h2>
+                    {isAdmin && <button className="bg-teal-600 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2" onClick={() => openModal('amenity')}><Plus size={16} /> Add Amenity</button>}
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    {amenities.map(a => (
+                      <div key={a.id} className="bg-white dark:bg-slate-800 p-6 rounded-xl border dark:border-slate-700 shadow-sm">
+                        <h3 className="font-bold text-lg dark:text-white">{a.name}</h3>
+                        <p className="text-sm text-gray-500 mt-1 mb-4">Open: {a.openTime} - {a.closeTime} • Capacity: {a.capacity}</p>
+                        <button className="w-full bg-teal-50 text-teal-700 font-medium py-2 rounded hover:bg-teal-100">Book Slot</button>
+                      </div>
+                    ))}
+                    {amenities.length === 0 && <p className="text-gray-500 col-span-2 text-center py-10">No amenities listed yet.</p>}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </main>
       </div>
 
       {/* Feature Modals */}
-      <Modal isOpen={modalState.isOpen} onClose={closeModal} title={modalState.type === 'notice' ? "Post Notice" : modalState.type === 'complaint' ? "Raise Complaint" : modalState.type === 'maintenance' ? "Generate Bills" : modalState.type === 'expense' ? "Add Expense" : "List Rental"}>
+      <Modal isOpen={modalState.isOpen} onClose={closeModal} title={modalState.type === 'notice' ? "Post Notice" : modalState.type === 'complaint' ? "Raise Complaint" : modalState.type === 'maintenance' ? "Generate Bills" : modalState.type === 'expense' ? "Add Expense" : modalState.type === 'rental' ? "List Rental" : modalState.type === 'election' ? "Create Election" : "Add Amenity"}>
         <div className="space-y-4">
           {modalState.type === 'notice' && (
             <>
@@ -1037,6 +1143,36 @@ export default function HumaraSocietyApp() {
               <input type="number" className="w-full p-2 border rounded" placeholder="Rent/Price (₹)" onChange={e => setFormData({ ...formData, price: e.target.value })} />
               <textarea className="w-full p-2 border rounded" placeholder="Details" onChange={e => setFormData({ ...formData, description: e.target.value })} />
               <select className="w-full p-2 border rounded" onChange={e => setFormData({ ...formData, type: e.target.value })}><option value="Rent">Flat for Rent</option><option value="Parking">Parking Slot</option></select>
+            </>
+          )}
+          {modalState.type === 'election' && (
+            <>
+              <input className="w-full p-2 border rounded" placeholder="Election Title" onChange={e => setFormData({ ...formData, title: e.target.value })} />
+              <select className="w-full p-2 border rounded" onChange={e => setFormData({ ...formData, position: e.target.value })}>
+                <option value="">Select Position</option>
+                <option value="President">President</option>
+                <option value="Secretary">Secretary</option>
+                <option value="Treasurer">Treasurer</option>
+              </select>
+              <textarea className="w-full p-2 border rounded" placeholder="Candidates (comma separated names)" onChange={e => setFormData({ ...formData, candidatesString: e.target.value })} />
+              <p className="text-xs text-gray-500">Example: John Doe, Jane Smith, Alex Johnson</p>
+            </>
+          )}
+          {modalState.type === 'amenity' && (
+            <>
+              <select className="w-full p-2 border rounded" onChange={e => setFormData({ ...formData, name: e.target.value === 'Other' ? '' : e.target.value, isCustom: e.target.value === 'Other' })}>
+                <option value="">Select Amenity</option>
+                {PREDEFINED_AMENITIES.map(a => <option key={a} value={a}>{a}</option>)}
+                <option value="Other">Other (Custom)</option>
+              </select>
+              {(!formData.name && formData.isCustom) || (formData.name && !PREDEFINED_AMENITIES.includes(formData.name)) ? (
+                <input className="w-full p-2 border rounded" placeholder="Custom Amenity Name" onChange={e => setFormData({ ...formData, name: e.target.value })} />
+              ) : null}
+              <div className="grid grid-cols-2 gap-2">
+                <input type="time" className="p-2 border rounded" onChange={e => setFormData({ ...formData, openTime: e.target.value })} />
+                <input type="time" className="p-2 border rounded" onChange={e => setFormData({ ...formData, closeTime: e.target.value })} />
+              </div>
+              <input type="number" className="w-full p-2 border rounded" placeholder="Capacity" onChange={e => setFormData({ ...formData, capacity: e.target.value })} />
             </>
           )}
           <button onClick={handleSubmitModal} className="w-full bg-emerald-600 text-white py-2 rounded">Submit</button>
