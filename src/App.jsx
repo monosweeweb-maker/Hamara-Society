@@ -65,7 +65,10 @@ import {
   Settings,
   DollarSign,
   UserPlus,
-  Briefcase
+  Briefcase,
+  IndianRupee,
+  Repeat,
+  PartyPopper
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -130,6 +133,7 @@ const ROLES = {
 const TABS = {
   DASHBOARD: 'dashboard',
   NOTICES: 'notices',
+  EVENTS: 'events',
   COMPLAINTS: 'complaints',
   FINANCE: 'finance',
   DIRECTORY: 'directory',
@@ -589,6 +593,8 @@ export default function HumaraSocietyApp() {
   const [elections, setElections] = useState([]);
   const [classifieds, setClassifieds] = useState([]);
   const [visitors, setVisitors] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [recurringExpenses, setRecurringExpenses] = useState([]);
 
   // --- Init ---
   useEffect(() => {
@@ -656,6 +662,7 @@ export default function HumaraSocietyApp() {
 
     unsubs.push(onSnapshot(doc(db, ...path, 'societies', sId), d => d.exists() && setSocietyData(d.data())));
     safeSub(query(collection(db, ...path, `notices_${sId}`), orderBy('createdAt', 'desc')), setNotices);
+    safeSub(query(collection(db, ...path, `events_${sId}`), orderBy('date', 'asc')), setEvents);
     safeSub(query(collection(db, ...path, `complaints_${sId}`), orderBy('createdAt', 'desc')), setComplaints);
     safeSub(query(collection(db, ...path, `bills_${sId}`), orderBy('dueDate', 'desc')), setBills);
     safeSub(collection(db, ...path, `amenities_${sId}`), setAmenities);
@@ -663,6 +670,7 @@ export default function HumaraSocietyApp() {
     safeSub(query(collection(db, ...path, `elections_${sId}`), orderBy('createdAt', 'desc')), setElections);
     safeSub(query(collection(db, ...path, `classifieds_${sId}`), orderBy('createdAt', 'desc')), setClassifieds);
     safeSub(query(collection(db, ...path, `visitors_${sId}`), orderBy('createdAt', 'desc')), setVisitors);
+    safeSub(collection(db, ...path, `recurring_${sId}`), setRecurringExpenses);
 
     const profiles = collection(db, 'artifacts', appId, 'public', 'data', 'profiles');
     safeSub(query(profiles, where('societyId', '==', sId), where('status', '==', MEMBER_STATUS.APPROVED)), setMembers);
@@ -794,19 +802,44 @@ export default function HumaraSocietyApp() {
     try {
       if (modalState.type === 'notice') {
         await addDoc(collection(db, ...path, `notices_${sId}`), { ...formData, postedBy: userData.fullName, role: userData.role, createdAt: serverTimestamp(), type: formData.type || 'General' });
+      } else if (modalState.type === 'event') {
+        await addDoc(collection(db, ...path, `events_${sId}`), { ...formData, createdBy: userData.fullName, createdAt: serverTimestamp() });
       } else if (modalState.type === 'complaint') {
         await addDoc(collection(db, ...path, `complaints_${sId}`), { ...formData, userId: user.uid, userName: userData.fullName, unitNumber: userData.unitNumber, status: STATUS.OPEN, createdAt: serverTimestamp() });
       } else if (modalState.type === 'maintenance') {
         const batchPromises = members.map(m => addDoc(collection(db, ...path, `bills_${sId}`), { title: formData.title, amount: parseFloat(formData.amount), dueDate: formData.dueDate, status: 'Unpaid', userId: m.uid, unitNumber: m.unitNumber, userName: m.fullName, type: 'Maintenance' }));
         await Promise.all(batchPromises);
         alert(`Bills generated for ${members.length} members.`);
+      } else if (modalState.type === 'set_maintenance') {
+        await updateDoc(doc(db, ...path, 'societies', sId), {
+          maintenanceAmount: parseFloat(formData.amount),
+          lateFee: parseFloat(formData.lateFee)
+        });
+        alert("Maintenance settings updated!");
       } else if (modalState.type === 'expense') {
         await addDoc(collection(db, ...path, `expenses_${sId}`), { ...formData, createdBy: userData.fullName, createdAt: serverTimestamp() });
-        if (formData.split) {
+
+        if (formData.deductFromSociety) {
+          await updateDoc(doc(db, ...path, 'societies', sId), { funds: increment(-parseFloat(formData.amount)) });
+        } else if (formData.splitType === 'split_specific') {
+          const units = formData.splitUnits.split(',').map(u => u.trim());
+          const targetMembers = members.filter(m => units.includes(m.unitNumber));
+          if (targetMembers.length > 0) {
+            const perPerson = parseFloat(formData.amount) / targetMembers.length;
+            const batchPromises = targetMembers.map(m => addDoc(collection(db, ...path, `bills_${sId}`), { title: `Split: ${formData.title}`, amount: perPerson.toFixed(2), dueDate: new Date().toISOString().split('T')[0], status: 'Unpaid', userId: m.uid, unitNumber: m.unitNumber, userName: m.fullName, type: 'Shared Expense' }));
+            await Promise.all(batchPromises);
+            alert(`Split bills generated for ${targetMembers.length} members.`);
+          } else {
+            alert("No members found with those unit numbers.");
+          }
+        } else if (formData.splitType === 'split_all') {
           const perPerson = parseFloat(formData.amount) / members.length;
           const batchPromises = members.map(m => addDoc(collection(db, ...path, `bills_${sId}`), { title: `Split: ${formData.title}`, amount: perPerson.toFixed(2), dueDate: new Date().toISOString().split('T')[0], status: 'Unpaid', userId: m.uid, unitNumber: m.unitNumber, userName: m.fullName, type: 'Shared Expense' }));
           await Promise.all(batchPromises);
         }
+      } else if (modalState.type === 'recurring_expense') {
+        await addDoc(collection(db, ...path, `recurring_${sId}`), formData);
+        alert("Recurring expense added!");
       } else if (modalState.type === 'rental') {
         await addDoc(collection(db, ...path, `rentals_${sId}`), { ...formData, ownerId: user.uid, ownerName: userData.fullName, contact: userData.email, createdAt: serverTimestamp() });
       } else if (modalState.type === 'election') {
@@ -914,6 +947,7 @@ export default function HumaraSocietyApp() {
                 { id: TABS.DASHBOARD, icon: LayoutDashboard, label: 'Dashboard' },
                 { id: TABS.FINANCE, icon: Wallet, label: 'Finances' },
                 { id: TABS.NOTICES, icon: Megaphone, label: 'Notices' },
+                { id: TABS.EVENTS, icon: PartyPopper, label: 'Events' },
                 { id: TABS.COMPLAINTS, icon: AlertTriangle, label: 'Complaints' },
                 { id: TABS.DIRECTORY, icon: Users, label: 'Directory' },
                 { id: TABS.APPROVALS, icon: UserPlus, label: 'Approvals', role: [ROLES.ADMIN] },
@@ -1000,36 +1034,101 @@ export default function HumaraSocietyApp() {
                 </div>
 
                 {isAdmin && (
-                  <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 flex flex-wrap gap-3">
-                    <button onClick={() => openModal('add_funds')} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-emerald-700 transition"><DollarSign size={16} /> Add Funds</button>
-                    <button onClick={() => openModal('expense')} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-red-700 transition"><CreditCard size={16} /> Record Expense</button>
-                    <button onClick={() => openModal('generate_monthly')} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-blue-700 transition"><FileText size={16} /> Generate Bills</button>
-                    <button onClick={() => openModal('set_maintenance')} className="bg-gray-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-gray-700 transition"><Settings size={16} /> Settings</button>
-                    <button onClick={calculateLateFees} className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-orange-700 transition"><Clock size={16} /> Apply Late Fees</button>
+                  <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700">
+                    <h3 className="font-bold text-lg dark:text-white mb-3">Actions</h3>
+                    <div className="flex flex-wrap gap-3">
+                      <button onClick={() => openModal('add_funds')} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-emerald-700 transition"><IndianRupee size={16} /> Add Funds</button>
+                      <button onClick={() => openModal('expense')} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-red-700 transition"><CreditCard size={16} /> Record Expense</button>
+                      <button onClick={() => openModal('generate_monthly')} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-blue-700 transition"><FileText size={16} /> Generate Bills</button>
+                      <button onClick={() => openModal('set_maintenance')} className="bg-gray-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-gray-700 transition"><Settings size={16} /> Settings</button>
+                      <button onClick={calculateLateFees} className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-orange-700 transition"><Clock size={16} /> Apply Late Fees</button>
+                      <button onClick={() => openModal('recurring_expense')} className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-purple-700 transition"><Repeat size={16} /> Add Recurring</button>
+                    </div>
                   </div>
                 )}
 
-                <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 overflow-hidden">
-                  <div className="p-4 border-b dark:border-slate-700 font-bold dark:text-white">All Bills</div>
-                  {bills.map(bill => (
-                    <div key={bill.id} className="p-4 border-b dark:border-slate-700 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-slate-700/50 transition">
-                      <div>
-                        <h4 className="font-bold dark:text-white">{bill.title}</h4>
-                        <p className="text-sm text-gray-500">Unit: {bill.unitNumber} • {bill.userName}</p>
-                        <p className="text-xs text-red-500">Due: {bill.dueDate} {bill.lateFeeApplied && "(Late Fee)"}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-bold dark:text-white">₹{bill.amount}</p>
-                        {bill.status === 'Paid' ? <Badge color="bg-green-100 text-green-800">Paid</Badge> :
-                          bill.status === 'Pending Approval' ?
-                            (isAdmin ? <button onClick={() => handleApprovePayment(bill)} className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">Approve</button> : <Badge color="bg-yellow-100 text-yellow-800">Pending</Badge>)
-                            :
-                            (bill.userId === user.uid ? <button onClick={() => handlePayBill(bill)} className="text-xs bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700">Pay</button> : <Badge color="bg-red-100 text-red-800">Unpaid</Badge>)
-                        }
-                      </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Bills Section */}
+                  <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 overflow-hidden">
+                    <div className="p-4 border-b dark:border-slate-700 font-bold dark:text-white">Recent Transactions / Bills</div>
+                    <div className="max-h-96 overflow-y-auto custom-scrollbar">
+                      {bills.map(bill => (
+                        <div key={bill.id} className="p-4 border-b dark:border-slate-700 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-slate-700/50 transition">
+                          <div>
+                            <h4 className="font-bold dark:text-white">{bill.title}</h4>
+                            <p className="text-sm text-gray-500">Unit: {bill.unitNumber} • {bill.userName}</p>
+                            <p className="text-xs text-red-500">Due: {bill.dueDate} {bill.lateFeeApplied && "(Late Fee)"}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold dark:text-white">₹{bill.amount}</p>
+                            {bill.status === 'Paid' ? <Badge color="bg-green-100 text-green-800">Paid</Badge> :
+                              bill.status === 'Pending Approval' ?
+                                (isAdmin ? <button onClick={() => handleApprovePayment(bill)} className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">Approve</button> : <Badge color="bg-yellow-100 text-yellow-800">Pending</Badge>)
+                                :
+                                (bill.userId === user.uid ? <button onClick={() => handlePayBill(bill)} className="text-xs bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700">Pay</button> : <Badge color="bg-red-100 text-red-800">Unpaid</Badge>)
+                            }
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  </div>
+
+                  {/* Recurring Expenses Section */}
+                  <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 overflow-hidden">
+                    <div className="p-4 border-b dark:border-slate-700 font-bold dark:text-white">Recurring Expenses</div>
+                    <div className="max-h-96 overflow-y-auto custom-scrollbar p-4 space-y-3">
+                      {recurringExpenses.length === 0 ? <p className="text-gray-500 text-sm">No recurring expenses set.</p> : recurringExpenses.map(exp => (
+                        <div key={exp.id} className="flex justify-between items-center bg-gray-50 dark:bg-slate-700 p-3 rounded-lg border dark:border-slate-600">
+                          <div>
+                            <h4 className="font-bold dark:text-white">{exp.title}</h4>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Frequency: {exp.frequency}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold text-emerald-600">₹{exp.amount}</p>
+                            <button onClick={() => {
+                              setModalState({ type: 'expense', isOpen: true });
+                              setFormData({ title: exp.title, amount: exp.amount, deductFromSociety: true });
+                            }} className="text-xs text-blue-600 underline mt-1">Record Now</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
+              </div>
+            )}
+
+            {/* EVENTS TAB */}
+            {activeTab === TABS.EVENTS && (
+              <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-xl font-bold dark:text-white">Community Events</h2>
+                  {isAdmin && <button className="bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700" onClick={() => openModal('event')}>Add Event</button>}
+                </div>
+                {events.length === 0 ? (
+                  <div className="text-center py-10 text-gray-500 dark:text-gray-400 bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700">
+                    <Calendar size={48} className="mx-auto mb-2 opacity-50" />
+                    <p>No upcoming events.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {events.map(ev => (
+                      <div key={ev.id} className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 shadow-sm overflow-hidden">
+                        <div className="bg-emerald-600 h-2"></div>
+                        <div className="p-5">
+                          <div className="flex justify-between items-start mb-2">
+                            <h3 className="font-bold text-lg dark:text-white">{ev.title}</h3>
+                            <span className="text-xs bg-gray-100 dark:bg-slate-700 px-2 py-1 rounded text-gray-600 dark:text-gray-300">{new Date(ev.date).toLocaleDateString()}</span>
+                          </div>
+                          <p className="text-gray-600 dark:text-gray-300 text-sm mb-4 line-clamp-3">{ev.description}</p>
+                          <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                            <Building size={14} /> {ev.location || 'Community Hall'}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1305,6 +1404,14 @@ export default function HumaraSocietyApp() {
               </select>
             </>
           )}
+          {modalState.type === 'event' && (
+            <>
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Event Title" onChange={e => setFormData({ ...formData, title: e.target.value })} />
+              <textarea className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Event Details" rows={3} onChange={e => setFormData({ ...formData, description: e.target.value })} />
+              <input type="date" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, date: e.target.value })} />
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Location (e.g. Club House)" onChange={e => setFormData({ ...formData, location: e.target.value })} />
+            </>
+          )}
           {modalState.type === 'complaint' && (
             <>
               <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Subject" onChange={e => setFormData({ ...formData, title: e.target.value })} />
@@ -1316,13 +1423,40 @@ export default function HumaraSocietyApp() {
               </select>
             </>
           )}
+          {modalState.type === 'recurring_expense' && (
+            <>
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Expense Name (e.g. Salary)" onChange={e => setFormData({ ...formData, title: e.target.value })} />
+              <input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Amount (₹)" onChange={e => setFormData({ ...formData, amount: e.target.value })} />
+              <select className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, frequency: e.target.value })}>
+                <option value="Monthly">Monthly</option>
+                <option value="Yearly">Yearly</option>
+              </select>
+            </>
+          )}
           {modalState.type === 'expense' && (
             <>
-              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Expense Title" onChange={e => setFormData({ ...formData, title: e.target.value })} />
-              <input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Amount (₹)" onChange={e => setFormData({ ...formData, amount: e.target.value })} />
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="split" onChange={e => setFormData({ ...formData, split: e.target.checked })} />
-                <label htmlFor="split" className="dark:text-white">Split cost among all members?</label>
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Expense Title" value={formData.title || ''} onChange={e => setFormData({ ...formData, title: e.target.value })} />
+              <input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Amount (₹)" value={formData.amount || ''} onChange={e => setFormData({ ...formData, amount: e.target.value })} />
+
+              <div className="space-y-2 mt-2">
+                <p className="text-sm font-semibold dark:text-white">Deduction Method:</p>
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer dark:text-white text-sm">
+                    <input type="radio" name="splitType" value="split_all" defaultChecked onChange={e => setFormData({ ...formData, splitType: e.target.value, deductFromSociety: false })} />
+                    Split All Members
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer dark:text-white text-sm">
+                    <input type="radio" name="splitType" value="society_fund" onChange={e => setFormData({ ...formData, splitType: e.target.value, deductFromSociety: true })} />
+                    Deduct Society Fund
+                  </label>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer dark:text-white text-sm">
+                  <input type="radio" name="splitType" value="split_specific" onChange={e => setFormData({ ...formData, splitType: e.target.value, deductFromSociety: false })} />
+                  Split Specific Units
+                </label>
+                {formData.splitType === 'split_specific' && (
+                  <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600 text-sm" placeholder="Enter Unit Numbers (comma separated)" onChange={e => setFormData({ ...formData, splitUnits: e.target.value })} />
+                )}
               </div>
             </>
           )}
