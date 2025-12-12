@@ -165,20 +165,83 @@ const VISITOR_TYPES = [
   "Courier Delivery", "Mechanic", "Cab/Taxi", "Service/Repair", "Maid", "Driver", "Household Help", "Others"
 ];
 
-// Mock Location Data
+// Expanded Location Data
 const LOCATION_DATA = {
   "India": {
-    "Maharashtra": ["Mumbai", "Pune", "Nagpur", "Nashik"],
-    "Delhi": ["New Delhi", "North Delhi", "South Delhi"],
-    "Karnataka": ["Bangalore", "Mysore", "Mangalore"],
-    "West Bengal": ["Kolkata", "Howrah", "Darjeeling"],
-    "Tamil Nadu": ["Chennai", "Coimbatore", "Madurai"],
-    "Uttar Pradesh": ["Lucknow", "Kanpur", "Noida"]
+    "Andaman and Nicobar Islands": ["Port Blair"],
+    "Andhra Pradesh": ["Visakhapatnam", "Vijayawada", "Guntur", "Nellore"],
+    "Arunachal Pradesh": ["Itanagar"],
+    "Assam": ["Guwahati", "Dispur", "Silchar"],
+    "Bihar": ["Patna", "Gaya", "Bhagalpur", "Muzaffarpur"],
+    "Chandigarh": ["Chandigarh"],
+    "Chhattisgarh": ["Raipur", "Bhilai"],
+    "Dadra and Nagar Haveli and Daman and Diu": ["Daman", "Silvassa"],
+    "Delhi": ["New Delhi", "North Delhi", "South Delhi", "East Delhi", "West Delhi"],
+    "Goa": ["Panaji", "Margao"],
+    "Gujarat": ["Ahmedabad", "Surat", "Vadodara", "Rajkot"],
+    "Haryana": ["Gurgaon", "Faridabad", "Panipat"],
+    "Himachal Pradesh": ["Shimla", "Manali", "Dharamshala"],
+    "Jammu and Kashmir": ["Srinagar", "Jammu"],
+    "Jharkhand": ["Ranchi", "Jamshedpur", "Dhanbad"],
+    "Karnataka": ["Bangalore", "Mysore", "Mangalore", "Hubli"],
+    "Kerala": ["Thiruvananthapuram", "Kochi", "Kozhikode"],
+    "Ladakh": ["Leh", "Kargil"],
+    "Lakshadweep": ["Kavaratti"],
+    "Madhya Pradesh": ["Bhopal", "Indore", "Gwalior", "Jabalpur"],
+    "Maharashtra": ["Mumbai", "Pune", "Nagpur", "Nashik", "Thane", "Aurangabad"],
+    "Manipur": ["Imphal"],
+    "Meghalaya": ["Shillong"],
+    "Mizoram": ["Aizawl"],
+    "Nagaland": ["Kohima", "Dimapur"],
+    "Odisha": ["Bhubaneswar", "Cuttack", "Rourkela"],
+    "Puducherry": ["Puducherry"],
+    "Punjab": ["Ludhiana", "Amritsar", "Chandigarh", "Jalandhar"],
+    "Rajasthan": ["Jaipur", "Udaipur", "Jodhpur", "Kota"],
+    "Sikkim": ["Gangtok"],
+    "Tamil Nadu": ["Chennai", "Coimbatore", "Madurai", "Trichy"],
+    "Telangana": ["Hyderabad", "Warangal"],
+    "Tripura": ["Agartala"],
+    "Uttar Pradesh": ["Lucknow", "Kanpur", "Noida", "Ghaziabad", "Varanasi"],
+    "Uttarakhand": ["Dehradun", "Haridwar", "Nainital"],
+    "West Bengal": ["Kolkata", "Howrah", "Darjeeling", "Siliguri"]
   },
   "USA": {
     "California": ["Los Angeles", "San Francisco", "San Diego"],
     "New York": ["New York City", "Buffalo", "Rochester"],
-    "Texas": ["Houston", "Austin", "Dallas"]
+    "Texas": ["Houston", "Austin", "Dallas"],
+    "Florida": ["Miami", "Orlando", "Tampa"]
+  },
+  "United Kingdom": {
+    "England": ["London", "Manchester", "Birmingham"],
+    "Scotland": ["Edinburgh", "Glasgow"],
+    "Wales": ["Cardiff", "Swansea"],
+    "Northern Ireland": ["Belfast"]
+  },
+  "UAE": {
+    "Dubai": ["Dubai"],
+    "Abu Dhabi": ["Abu Dhabi"],
+    "Sharjah": ["Sharjah"],
+    "Ajman": ["Ajman"]
+  },
+  "Saudi Arabia": {
+    "Riyadh": ["Riyadh"],
+    "Jeddah": ["Jeddah"],
+    "Mecca": ["Mecca"],
+    "Medina": ["Medina"]
+  },
+  "Qatar": {
+    "Doha": ["Doha"],
+    "Al Rayyan": ["Al Rayyan"]
+  },
+  "Germany": {
+    "Bavaria": ["Munich", "Nuremberg"],
+    "Berlin": ["Berlin"],
+    "Hamburg": ["Hamburg"]
+  },
+  "France": {
+    "Île-de-France": ["Paris"],
+    "Provence-Alpes-Côte d'Azur": ["Marseille", "Nice"],
+    "Auvergne-Rhône-Alpes": ["Lyon"]
   }
 };
 
@@ -406,6 +469,36 @@ const AuthModal = ({ show, onClose, mode, setMode, formData, setFormData, onSubm
   const states = formData.country ? Object.keys(LOCATION_DATA[formData.country] || {}) : [];
   const cities = formData.state ? (LOCATION_DATA[formData.country]?.[formData.state] || []) : [];
 
+  const handlePincodeChange = (e) => {
+    const code = e.target.value;
+    const updates = { pincode: code };
+
+    // Basic India Logic for State Auto-selection
+    if (formData.country === 'India' && code.length >= 2) {
+      const prefix = parseInt(code.substring(0, 2));
+      let detectedState = '';
+      if (prefix === 11) detectedState = 'Delhi';
+      else if (prefix >= 40 && prefix <= 44) detectedState = 'Maharashtra';
+      else if (prefix >= 56 && prefix <= 59) detectedState = 'Karnataka';
+      else if (prefix >= 60 && prefix <= 66) detectedState = 'Tamil Nadu';
+      else if (prefix >= 70 && prefix <= 74) detectedState = 'West Bengal';
+      else if (prefix >= 20 && prefix <= 28) detectedState = 'Uttar Pradesh';
+      else if (prefix >= 51 && prefix <= 53) detectedState = 'Andhra Pradesh';
+      else if (prefix >= 78 && prefix <= 79) detectedState = 'Assam';
+      else if (prefix >= 38 && prefix <= 39) detectedState = 'Gujarat';
+      else if (prefix === 68 || prefix === 69) detectedState = 'Kerala';
+      else if (prefix >= 14 && prefix <= 16) detectedState = 'Punjab';
+      else if (prefix >= 30 && prefix <= 34) detectedState = 'Rajasthan';
+      else if (prefix >= 50 && prefix <= 53) detectedState = 'Telangana';
+
+      if (detectedState) {
+        updates.state = detectedState;
+        updates.city = ''; // Reset city as list changes
+      }
+    }
+    setFormData(prev => ({ ...prev, ...updates }));
+  };
+
   return (
     <Modal isOpen={show} onClose={onClose} title={mode === 'login' ? 'Welcome Back' : mode === 'register' ? 'Join Society' : 'Create New Society'}>
       <div className="space-y-4">
@@ -426,27 +519,27 @@ const AuthModal = ({ show, onClose, mode, setMode, formData, setFormData, onSubm
             <div className="bg-yellow-50 dark:bg-yellow-900/30 p-3 rounded-lg text-xs text-yellow-800 dark:text-yellow-200 border border-yellow-200 dark:border-yellow-800/50">Unique ID generated automatically.</div>
             <input className="w-full p-2.5 border rounded-lg dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Society Name" value={formData.societyName || ''} onChange={e => setFormData({ ...formData, societyName: e.target.value })} />
             <div className="grid grid-cols-2 gap-4">
-              <select className="w-full p-2.5 border rounded-lg dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, country: e.target.value, state: '', city: '' })}>
+              <select className="w-full p-2.5 border rounded-lg dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, country: e.target.value, state: '', city: '' })} value={formData.country || ''}>
                 <option value="">Select Country</option>
                 {countries.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
-              <select className="w-full p-2.5 border rounded-lg dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, state: e.target.value, city: '' })} disabled={!formData.country}>
+              <select className="w-full p-2.5 border rounded-lg dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, state: e.target.value, city: '' })} disabled={!formData.country} value={formData.state || ''}>
                 <option value="">Select State</option>
                 {states.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
             <div className="grid grid-cols-2 gap-4">
               {cities.length > 0 ? (
-                <select className="w-full p-2.5 border rounded-lg dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, city: e.target.value })}>
+                <select className="w-full p-2.5 border rounded-lg dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, city: e.target.value })} value={formData.city || ''}>
                   <option value="">Select City</option>
                   {cities.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               ) : (
-                <input className="w-full p-2.5 border rounded-lg dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="City" onChange={e => setFormData({ ...formData, city: e.target.value })} />
+                <input className="w-full p-2.5 border rounded-lg dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="City" onChange={e => setFormData({ ...formData, city: e.target.value })} value={formData.city || ''} />
               )}
-              <input className="w-full p-2.5 border rounded-lg dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Pincode" onChange={e => setFormData({ ...formData, pincode: e.target.value })} />
+              <input className="w-full p-2.5 border rounded-lg dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Pincode" value={formData.pincode || ''} onChange={handlePincodeChange} />
             </div>
-            <select className="w-full p-2.5 border rounded-lg dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, societyType: e.target.value })}>
+            <select className="w-full p-2.5 border rounded-lg dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, societyType: e.target.value })} value={formData.societyType || ''}>
               <option value="">Society Type</option>
               {SOCIETY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
