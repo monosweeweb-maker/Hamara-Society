@@ -25,6 +25,7 @@ import {
   serverTimestamp,
   increment,
   arrayUnion,
+  arrayRemove,
   deleteDoc
 } from 'firebase/firestore';
 import {
@@ -68,7 +69,8 @@ import {
   Briefcase,
   IndianRupee,
   Repeat,
-  PartyPopper
+  PartyPopper,
+  Trash2
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -150,6 +152,22 @@ const STATUS = { OPEN: 'Open', IN_PROGRESS: 'In Progress', RESOLVED: 'Resolved',
 const MEMBER_STATUS = { PENDING: 'pending', APPROVED: 'approved', REJECTED: 'rejected' };
 
 const AMENITY_TYPES = ["Swimming Pool", "Gym", "Club House", "Tennis Court", "Parking Lot", "Garden", "Other"];
+
+const VISITOR_TYPES = [
+  "Guest",
+  "Food Delivery",
+  "Product Delivery",
+  "Large Appliance Delivery",
+  "Grocery Delivery",
+  "Courier Delivery",
+  "Mechanic",
+  "Cab/Taxi",
+  "Service/Repair",
+  "Maid",
+  "Driver",
+  "Household Help",
+  "Others"
+];
 
 // --- Reusable Components ---
 
@@ -383,7 +401,9 @@ const AuthModal = ({
   setFormData,
   onSubmit,
   loading,
-  error
+  error,
+  onCheckSocietyCode,
+  availableUnits
 }) => {
   if (!show) return null;
 
@@ -453,17 +473,33 @@ const AuthModal = ({
                 className="w-full p-2.5 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none font-mono uppercase bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
                 placeholder="SOC-XXXXXX"
                 value={formData.societyCode || ''}
-                onChange={e => setFormData({ ...formData, societyCode: e.target.value.toUpperCase() })}
+                onChange={e => {
+                  const val = e.target.value.toUpperCase();
+                  setFormData({ ...formData, societyCode: val });
+                }}
+                onBlur={() => onCheckSocietyCode(formData.societyCode)}
               />
             </div>
             <div className="space-y-2">
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Unit / Flat Number</label>
-              <input
-                className="w-full p-2.5 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
-                placeholder="e.g. A-101"
-                value={formData.unitNumber || ''}
-                onChange={e => setFormData({ ...formData, unitNumber: e.target.value })}
-              />
+              {availableUnits && availableUnits.length > 0 ? (
+                <select
+                  className="w-full p-2.5 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  value={formData.unitNumber || ''}
+                  onChange={e => setFormData({ ...formData, unitNumber: e.target.value })}
+                >
+                  <option value="">Select Unit</option>
+                  {availableUnits.map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
+              ) : (
+                <input
+                  className="w-full p-2.5 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  placeholder={formData.societyCode ? "No units found / Admin hasn't added units" : "Enter Society Code first"}
+                  value={formData.unitNumber || ''}
+                  onChange={e => setFormData({ ...formData, unitNumber: e.target.value })}
+                  disabled={!formData.societyCode}
+                />
+              )}
             </div>
           </>
         )}
@@ -575,6 +611,7 @@ export default function HumaraSocietyApp() {
   const [loading, setLoading] = useState(false);
   const [profileError, setProfileError] = useState(null);
   const [showCompleteProfile, setShowCompleteProfile] = useState(false);
+  const [registerUnits, setRegisterUnits] = useState([]); // Valid units for registration
 
   // Footer Modals State (Needed for LandingPage & inside app)
   const [showPrivacy, setShowPrivacy] = useState(false);
@@ -682,10 +719,25 @@ export default function HumaraSocietyApp() {
   // --- Handlers ---
   const generateSocietyCode = () => `SOC-${Array(6).fill(0).map(() => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'.charAt(Math.floor(Math.random() * 32))).join('')}`;
 
+  const fetchUnitsForSociety = async (code) => {
+    if (!code) return;
+    try {
+      const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'societies', code));
+      if (snap.exists() && snap.data().units) {
+        setRegisterUnits(snap.data().units.sort());
+      } else {
+        setRegisterUnits([]);
+      }
+    } catch (e) {
+      console.error("Error fetching units:", e);
+      setRegisterUnits([]);
+    }
+  };
+
   const initializeUserDocs = async (uid, formData, finalSocId, role, status) => {
     const userPayload = { uid, email: formData.email || user.email, fullName: formData.fullName, societyId: finalSocId, unitNumber: formData.unitNumber || 'N/A', role, status, joinedAt: serverTimestamp() };
     if (authMode === 'create-society') {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'societies', finalSocId), { name: formData.societyName, id: finalSocId, funds: 0, maintenanceAmount: 0, lateFee: 0, creatorId: uid, createdAt: serverTimestamp() });
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'societies', finalSocId), { name: formData.societyName, id: finalSocId, funds: 0, maintenanceAmount: 0, lateFee: 0, creatorId: uid, createdAt: serverTimestamp(), units: [] });
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', `amenities_${finalSocId}`), { name: 'Club House', capacity: 50, openTime: '09:00', closeTime: '22:00' });
     }
     await setDoc(doc(db, 'artifacts', appId, 'users', uid, 'settings', 'profile'), userPayload);
@@ -816,6 +868,10 @@ export default function HumaraSocietyApp() {
           lateFee: parseFloat(formData.lateFee)
         });
         alert("Maintenance settings updated!");
+      } else if (modalState.type === 'add_unit') {
+        const unitsToAdd = formData.units.split(',').map(u => u.trim()).filter(u => u);
+        await updateDoc(doc(db, ...path, 'societies', sId), { units: arrayUnion(...unitsToAdd) });
+        alert(`Added ${unitsToAdd.length} units.`);
       } else if (modalState.type === 'expense') {
         await addDoc(collection(db, ...path, `expenses_${sId}`), { ...formData, createdBy: userData.fullName, createdAt: serverTimestamp() });
 
@@ -863,8 +919,10 @@ export default function HumaraSocietyApp() {
       } else if (modalState.type === 'classified') {
         await addDoc(collection(db, ...path, `classifieds_${sId}`), { ...formData, ownerId: user.uid, ownerName: userData.fullName, contact: userData.email, createdAt: serverTimestamp() });
       } else if (modalState.type === 'visitor_preapprove' || modalState.type === 'visitor_entry') {
+        const finalType = formData.type === 'Others' ? formData.customType : formData.type;
         const visitorData = {
           ...formData,
+          type: finalType,
           status: modalState.type === 'visitor_entry' ? 'Entered' : 'Expected',
           entryTime: modalState.type === 'visitor_entry' ? serverTimestamp() : null,
           hostId: modalState.type === 'visitor_preapprove' ? user.uid : formData.hostId, // Security selects host
@@ -876,6 +934,12 @@ export default function HumaraSocietyApp() {
       }
       closeModal();
     } catch (e) { alert("Error: " + e.message); }
+  };
+
+  const handleDeleteUnit = async (unitName) => {
+    if (confirm(`Delete unit ${unitName}? Users already registered with this unit won't be deleted.`)) {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'societies', userData.societyId), { units: arrayRemove(unitName) });
+    }
   };
 
   const handlePayBill = async (bill) => {
@@ -923,7 +987,7 @@ export default function HumaraSocietyApp() {
 
   // --- Render ---
   if (!authChecked) return null;
-  if (!user) return <AppWrapper darkMode={darkMode}><LandingPage onAuthClick={() => setShowAuthModal(true)} setAuthMode={setAuthMode} /><AuthModal show={showAuthModal} onClose={() => setShowAuthModal(false)} mode={authMode} setMode={setAuthMode} formData={authForm} setFormData={setAuthForm} onSubmit={handleAuthSubmit} loading={loading} error={authError} /></AppWrapper>;
+  if (!user) return <AppWrapper darkMode={darkMode}><LandingPage onAuthClick={() => setShowAuthModal(true)} setAuthMode={setAuthMode} /><AuthModal show={showAuthModal} onClose={() => setShowAuthModal(false)} mode={authMode} setMode={setAuthMode} formData={authForm} setFormData={setAuthForm} onSubmit={handleAuthSubmit} loading={loading} error={authError} onCheckSocietyCode={fetchUnitsForSociety} availableUnits={registerUnits} /></AppWrapper>;
 
   if (!userData) return <AppWrapper darkMode={darkMode}><div className="flex justify-center items-center h-screen">Loading Profile...</div></AppWrapper>;
 
@@ -956,6 +1020,7 @@ export default function HumaraSocietyApp() {
                 { id: TABS.RENTALS, icon: Home, label: 'Rentals' },
                 { id: TABS.AMENITIES, icon: Calendar, label: 'Amenities' },
                 { id: TABS.ELECTIONS, icon: Vote, label: 'Elections' },
+                { id: TABS.SETTINGS, icon: Settings, label: 'Settings', role: [ROLES.ADMIN] },
               ].filter(item => !item.role || item.role.includes(userData.role)).map((item) => (
                 <li key={item.id}>
                   <button onClick={() => { setActiveTab(item.id); setMobileMenuOpen(false); }} className={`flex items-center justify-between w-full px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === item.id ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
@@ -1194,7 +1259,11 @@ export default function HumaraSocietyApp() {
                         <div>
                           <h4 className="font-bold dark:text-white flex items-center gap-2">{v.name} <Badge color="bg-blue-100 text-blue-800">{v.type}</Badge></h4>
                           <p className="text-sm text-gray-500">Host: {v.hostUnit} ({v.hostId ? 'Resident' : 'Walk-in'})</p>
-                          <p className="text-xs text-gray-400">Entry: {v.entryTime ? new Date(v.entryTime.seconds * 1000).toLocaleString() : 'Expected'}</p>
+                          <p className="text-xs text-gray-400 mt-1">
+                            {v.isDaily ? <span className="text-purple-600 font-bold mr-2">Daily Staff</span> : null}
+                            {v.status === 'Entered' ? `Entry: ${v.entryTime ? new Date(v.entryTime.seconds * 1000).toLocaleString() : 'Just now'}` :
+                              v.expectedDate ? `Expected: ${new Date(v.expectedDate).toLocaleString()}` : 'Expected Soon'}
+                          </p>
                         </div>
                         <div className="text-right">
                           <span className={`px-2 py-1 rounded text-xs font-bold ${v.status === 'Entered' ? 'bg-green-100 text-green-700' : v.status === 'Exited' ? 'bg-gray-200 text-gray-600' : 'bg-yellow-100 text-yellow-700'}`}>{v.status}</span>
@@ -1342,6 +1411,31 @@ export default function HumaraSocietyApp() {
               </div>
             )}
 
+            {/* SETTINGS TAB (Admin Only) */}
+            {activeTab === TABS.SETTINGS && isAdmin && (
+              <div className="space-y-6">
+                <h2 className="text-xl font-bold dark:text-white">Admin Settings</h2>
+
+                {/* Unit Management */}
+                <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border dark:border-slate-700 shadow-sm">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="font-bold text-lg dark:text-white">Manage Society Units</h3>
+                    <button onClick={() => openModal('add_unit')} className="bg-emerald-600 text-white px-3 py-1.5 rounded text-sm hover:bg-emerald-700 transition flex items-center gap-2"><Plus size={16} /> Add Unit</button>
+                  </div>
+                  <p className="text-sm text-gray-500 mb-4">Define valid unit numbers for resident registration.</p>
+
+                  <div className="flex flex-wrap gap-2">
+                    {societyData?.units?.length > 0 ? societyData.units.map(unit => (
+                      <span key={unit} className="bg-gray-100 dark:bg-slate-700 text-gray-800 dark:text-gray-200 px-3 py-1 rounded-full text-sm flex items-center gap-2">
+                        {unit}
+                        <button onClick={() => handleDeleteUnit(unit)} className="text-gray-400 hover:text-red-500"><X size={14} /></button>
+                      </span>
+                    )) : <p className="text-gray-400 text-sm italic">No units added yet.</p>}
+                  </div>
+                </div>
+              </div>
+            )}
+
           </div>
         </main>
       </div>
@@ -1391,6 +1485,17 @@ export default function HumaraSocietyApp() {
                   Cash in Bank
                 </label>
               </div>
+            </>
+          )}
+          {modalState.type === 'add_unit' && (
+            <>
+              <label className="text-sm dark:text-white">Add Unit Number(s)</label>
+              <input
+                className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600"
+                placeholder="e.g. A-101, A-102 (Comma separated)"
+                onChange={e => setFormData({ ...formData, units: e.target.value })}
+              />
+              <p className="text-xs text-gray-500">Residents will select from these units during registration.</p>
             </>
           )}
           {modalState.type === 'notice' && (
@@ -1519,21 +1624,44 @@ export default function HumaraSocietyApp() {
           )}
           {(modalState.type === 'visitor_preapprove' || modalState.type === 'visitor_entry') && (
             <>
-              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Visitor Name" onChange={e => setFormData({ ...formData, name: e.target.value })} />
-              <select className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, type: e.target.value })}>
-                <option value="Guest">Guest</option>
-                <option value="Delivery">Delivery</option>
-                <option value="Cab">Cab/Taxi</option>
-                <option value="Service">Service/Repair</option>
+              <select
+                className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600"
+                onChange={e => setFormData({ ...formData, type: e.target.value })}
+              >
+                <option value="">Select Visitor Type</option>
+                {VISITOR_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
+
+              {formData.type === 'Others' && (
+                <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Specify Visitor Type" onChange={e => setFormData({ ...formData, customType: e.target.value })} />
+              )}
+
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Visitor Name" onChange={e => setFormData({ ...formData, name: e.target.value })} />
+
               {modalState.type === 'visitor_entry' && (
                 <div className="flex gap-2">
                   <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Flat No / Unit" onChange={e => setFormData({ ...formData, hostUnit: e.target.value })} />
                   <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Purpose" onChange={e => setFormData({ ...formData, purpose: e.target.value })} />
                 </div>
               )}
-              {modalState.type === 'visitor_preapprove' && (
-                <input type="datetime-local" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, expectedDate: e.target.value })} />
+
+              <div className="flex items-center gap-2 py-2">
+                <input type="checkbox" id="isDaily" onChange={e => setFormData({ ...formData, isDaily: e.target.checked })} />
+                <label htmlFor="isDaily" className="dark:text-white text-sm">Daily Help/Staff?</label>
+              </div>
+
+              {!formData.isDaily && modalState.type === 'visitor_preapprove' && (
+                <>
+                  <label className="text-xs text-gray-500">Expected Date:</label>
+                  <input type="date" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, visitDate: e.target.value })} />
+
+                  <label className="text-xs text-gray-500 mt-2 block">Expected Time Window:</label>
+                  <div className="flex gap-2">
+                    <input type="time" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, timeStart: e.target.value })} />
+                    <span className="self-center dark:text-white">to</span>
+                    <input type="time" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, timeEnd: e.target.value })} />
+                  </div>
+                </>
               )}
             </>
           )}
