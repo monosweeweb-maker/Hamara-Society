@@ -858,8 +858,28 @@ export default function HumaraSocietyApp() {
         await addDoc(collection(db, ...path, `events_${sId}`), { ...formData, createdBy: userData.fullName, createdAt: serverTimestamp() });
       } else if (modalState.type === 'complaint') {
         await addDoc(collection(db, ...path, `complaints_${sId}`), { ...formData, userId: user.uid, userName: userData.fullName, unitNumber: userData.unitNumber, status: STATUS.OPEN, createdAt: serverTimestamp() });
-      } else if (modalState.type === 'maintenance') {
-        const batchPromises = members.map(m => addDoc(collection(db, ...path, `bills_${sId}`), { title: formData.title, amount: parseFloat(formData.amount), dueDate: formData.dueDate, status: 'Unpaid', userId: m.uid, unitNumber: m.unitNumber, userName: m.fullName, type: 'Maintenance' }));
+      } else if (modalState.type === 'generate_monthly') {
+        if (!societyData?.maintenanceAmount) {
+          alert("Please set Maintenance Amount in Settings first.");
+          return;
+        }
+        if (!formData.dueDate) {
+          alert("Please select a Due Date.");
+          return;
+        }
+
+        const title = `Maintenance - ${new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}`;
+        const batchPromises = members.map(m => addDoc(collection(db, ...path, `bills_${sId}`), {
+          title: title,
+          amount: parseFloat(societyData.maintenanceAmount),
+          dueDate: formData.dueDate,
+          status: 'Unpaid',
+          userId: m.uid,
+          unitNumber: m.unitNumber,
+          userName: m.fullName,
+          type: 'Maintenance',
+          createdAt: serverTimestamp()
+        }));
         await Promise.all(batchPromises);
         alert(`Bills generated for ${members.length} members.`);
       } else if (modalState.type === 'set_maintenance') {
@@ -1104,7 +1124,7 @@ export default function HumaraSocietyApp() {
                     <div className="flex flex-wrap gap-3">
                       <button onClick={() => openModal('add_funds')} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-emerald-700 transition"><IndianRupee size={16} /> Add Funds</button>
                       <button onClick={() => openModal('expense')} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-red-700 transition"><CreditCard size={16} /> Record Expense</button>
-                      <button onClick={() => openModal('generate_monthly')} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-blue-700 transition"><FileText size={16} /> Generate Bills</button>
+                      <button onClick={() => openModal('generate_monthly')} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-blue-700 transition"><FileText size={16} /> Generate Monthly Maintenance Bill</button>
                       <button onClick={() => openModal('set_maintenance')} className="bg-gray-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-gray-700 transition"><Settings size={16} /> Settings</button>
                       <button onClick={calculateLateFees} className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-orange-700 transition"><Clock size={16} /> Apply Late Fees</button>
                       <button onClick={() => openModal('recurring_expense')} className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-purple-700 transition"><Repeat size={16} /> Add Recurring</button>
