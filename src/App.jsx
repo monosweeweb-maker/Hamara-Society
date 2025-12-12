@@ -76,25 +76,24 @@ const getFirebaseConfig = () => {
     console.error("Firebase Config Error (Global):", e);
   }
 
-  // 2. Try reading from process.env (Fallback for Vercel/Node environments to avoid import.meta issues)
+  // 2. Try reading from import.meta.env (Required for Vite/Vercel)
+  // This might show a warning in the Canvas preview build, but it is necessary for Vercel.
   try {
-    const env = typeof process !== 'undefined' ? process.env : {};
-
-    // Check for VITE_FIREBASE_ prefix (User specific) or standard VITE_ / REACT_APP_ prefixes
-    const apiKey = env.VITE_FIREBASE_API_KEY || env.VITE_API_KEY || env.REACT_APP_API_KEY;
-
-    if (apiKey) {
-      return {
-        apiKey: apiKey,
-        authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || env.VITE_AUTH_DOMAIN || env.REACT_APP_AUTH_DOMAIN,
-        projectId: env.VITE_FIREBASE_PROJECT_ID || env.VITE_PROJECT_ID || env.REACT_APP_PROJECT_ID,
-        storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || env.VITE_STORAGE_BUCKET || env.REACT_APP_STORAGE_BUCKET,
-        messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || env.VITE_MESSAGING_SENDER_ID || env.REACT_APP_MESSAGING_SENDER_ID,
-        appId: env.VITE_FIREBASE_APP_ID || env.VITE_APP_ID || env.REACT_APP_APP_ID
-      };
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      const env = import.meta.env;
+      if (env.VITE_FIREBASE_API_KEY) {
+        return {
+          apiKey: env.VITE_FIREBASE_API_KEY,
+          authDomain: env.VITE_FIREBASE_AUTH_DOMAIN,
+          projectId: env.VITE_FIREBASE_PROJECT_ID,
+          storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET,
+          messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+          appId: env.VITE_FIREBASE_APP_ID
+        };
+      }
     }
   } catch (e) {
-    console.warn("Environment variable access failed:", e);
+    // console.warn("Vite config access failed:", e);
   }
 
   // 3. Fallback / Placeholder
