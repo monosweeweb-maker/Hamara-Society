@@ -67,13 +67,38 @@ import {
 
 // --- Firebase Configuration ---
 const getFirebaseConfig = () => {
+  // 1. Try reading from the global injected variable (for Canvas/Preview environments)
   try {
     if (typeof __firebase_config !== 'undefined') {
       return JSON.parse(__firebase_config);
     }
   } catch (e) {
-    console.error("Firebase Config Error:", e);
+    console.error("Firebase Config Error (Global):", e);
   }
+
+  // 2. Try reading from process.env (Fallback for Vercel/Node environments to avoid import.meta issues)
+  try {
+    const env = typeof process !== 'undefined' ? process.env : {};
+
+    // Check for VITE_FIREBASE_ prefix (User specific) or standard VITE_ / REACT_APP_ prefixes
+    const apiKey = env.VITE_FIREBASE_API_KEY || env.VITE_API_KEY || env.REACT_APP_API_KEY;
+
+    if (apiKey) {
+      return {
+        apiKey: apiKey,
+        authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || env.VITE_AUTH_DOMAIN || env.REACT_APP_AUTH_DOMAIN,
+        projectId: env.VITE_FIREBASE_PROJECT_ID || env.VITE_PROJECT_ID || env.REACT_APP_PROJECT_ID,
+        storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || env.VITE_STORAGE_BUCKET || env.REACT_APP_STORAGE_BUCKET,
+        messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || env.VITE_MESSAGING_SENDER_ID || env.REACT_APP_MESSAGING_SENDER_ID,
+        appId: env.VITE_FIREBASE_APP_ID || env.VITE_APP_ID || env.REACT_APP_APP_ID
+      };
+    }
+  } catch (e) {
+    console.warn("Environment variable access failed:", e);
+  }
+
+  // 3. Fallback / Placeholder
+  console.warn("No Firebase config found. Falling back to placeholders.");
   return {
     apiKey: "YOUR_API_KEY",
     authDomain: "YOUR_PROJECT.firebaseapp.com",
