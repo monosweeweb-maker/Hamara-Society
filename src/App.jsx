@@ -18,6 +18,7 @@ import {
   addDoc,
   updateDoc,
   getDoc,
+  getDocs,
   onSnapshot,
   query,
   where,
@@ -70,7 +71,9 @@ import {
   IndianRupee,
   Repeat,
   PartyPopper,
-  Trash2
+  Trash2,
+  Search as SearchIcon,
+  MapPin
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -168,6 +171,25 @@ const VISITOR_TYPES = [
   "Household Help",
   "Others"
 ];
+
+// Mock Location Data
+const LOCATION_DATA = {
+  "India": {
+    "Maharashtra": ["Mumbai", "Pune", "Nagpur", "Nashik"],
+    "Delhi": ["New Delhi", "North Delhi", "South Delhi"],
+    "Karnataka": ["Bangalore", "Mysore", "Mangalore"],
+    "West Bengal": ["Kolkata", "Howrah", "Darjeeling"],
+    "Tamil Nadu": ["Chennai", "Coimbatore", "Madurai"],
+    "Uttar Pradesh": ["Lucknow", "Kanpur", "Noida"]
+  },
+  "USA": {
+    "California": ["Los Angeles", "San Francisco", "San Diego"],
+    "New York": ["New York City", "Buffalo", "Rochester"],
+    "Texas": ["Houston", "Austin", "Dallas"]
+  }
+};
+
+const SOCIETY_TYPES = ["Apartment Complex", "Gated Community", "Housing Society", "Co-operative Housing Society"];
 
 // --- Reusable Components ---
 
@@ -403,9 +425,16 @@ const AuthModal = ({
   loading,
   error,
   onCheckSocietyCode,
-  availableUnits
+  onSearchSociety,
+  availableUnits,
+  foundSocietyName
 }) => {
   if (!show) return null;
+
+  // Derive countries/states from mocked data
+  const countries = Object.keys(LOCATION_DATA);
+  const states = formData.country ? Object.keys(LOCATION_DATA[formData.country] || {}) : [];
+  const cities = formData.state ? (LOCATION_DATA[formData.country]?.[formData.state] || []) : [];
 
   return (
     <Modal isOpen={show} onClose={onClose} title={mode === 'login' ? 'Welcome Back' : mode === 'register' ? 'Join Society' : 'Create New Society'}>
@@ -451,24 +480,102 @@ const AuthModal = ({
         </div>
 
         {mode === 'create-society' && (
-          <div className="space-y-2 pt-2">
+          <>
             <div className="bg-yellow-50 dark:bg-yellow-900/30 p-3 rounded-lg text-xs text-yellow-800 dark:text-yellow-200 border border-yellow-200 dark:border-yellow-800/50">
-              A unique Society ID will be generated for you to share with residents.
+              Unique ID generated automatically. No duplicates allowed in same pincode.
             </div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Society Name</label>
-            <input
-              className="w-full p-2.5 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
-              placeholder="e.g. Green Valley Apartments"
-              value={formData.societyName || ''}
-              onChange={e => setFormData({ ...formData, societyName: e.target.value })}
-            />
-          </div>
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Society Name</label>
+              <input
+                className="w-full p-2.5 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                placeholder="e.g. Green Valley Apartments"
+                value={formData.societyName || ''}
+                onChange={e => setFormData({ ...formData, societyName: e.target.value })}
+              />
+            </div>
+
+            {/* Address Fields */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Country</label>
+                <select
+                  className="w-full p-2.5 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  onChange={e => setFormData({ ...formData, country: e.target.value, state: '', city: '' })}
+                >
+                  <option value="">Select</option>
+                  {countries.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">State</label>
+                <select
+                  className="w-full p-2.5 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  onChange={e => setFormData({ ...formData, state: e.target.value, city: '' })}
+                  disabled={!formData.country}
+                >
+                  <option value="">Select</option>
+                  {states.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">City/District</label>
+                {cities.length > 0 ? (
+                  <select
+                    className="w-full p-2.5 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                    onChange={e => setFormData({ ...formData, city: e.target.value })}
+                  >
+                    <option value="">Select</option>
+                    {cities.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                ) : (
+                  <input
+                    className="w-full p-2.5 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                    placeholder="Enter City"
+                    onChange={e => setFormData({ ...formData, city: e.target.value })}
+                  />
+                )}
+              </div>
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Pincode</label>
+                <input
+                  className="w-full p-2.5 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  placeholder="123456"
+                  onChange={e => setFormData({ ...formData, pincode: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Society Type</label>
+              <select
+                className="w-full p-2.5 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                onChange={e => setFormData({ ...formData, societyType: e.target.value })}
+              >
+                <option value="">Select Type</option>
+                {SOCIETY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+          </>
         )}
 
         {mode === 'register' && (
           <>
-            <div className="space-y-2 pt-2">
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Society Code</label>
+            <div className="space-y-2 pt-2 border-t dark:border-slate-700">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Find Your Society</label>
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 p-2.5 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
+                  placeholder="Search by Name/Pincode"
+                  value={formData.searchQuery || ''}
+                  onChange={e => setFormData({ ...formData, searchQuery: e.target.value })}
+                />
+                <button onClick={() => onSearchSociety(formData.searchQuery)} className="bg-gray-200 dark:bg-slate-600 p-2.5 rounded-lg hover:bg-gray-300"><SearchIcon size={20} /></button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Society Code (Unique ID)</label>
               <input
                 className="w-full p-2.5 border border-gray-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none font-mono uppercase bg-white dark:bg-slate-700 text-gray-900 dark:text-white"
                 placeholder="SOC-XXXXXX"
@@ -479,7 +586,9 @@ const AuthModal = ({
                 }}
                 onBlur={() => onCheckSocietyCode(formData.societyCode)}
               />
+              {foundSocietyName && <p className="text-sm text-emerald-600 font-bold flex items-center gap-1"><CheckCircle size={14} /> {foundSocietyName}</p>}
             </div>
+
             <div className="space-y-2">
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Unit / Flat Number</label>
               {availableUnits && availableUnits.length > 0 ? (
@@ -542,6 +651,9 @@ const DashboardView = ({ userData, societyData, bills, complaints, setActiveTab 
         <div className="relative z-10">
           <h1 className="text-2xl md:text-3xl font-bold mb-2">Welcome back, {userData.fullName.split(' ')[0]}! 👋</h1>
           <p className="opacity-90">Society: {societyData?.name} <span className="ml-2 bg-white/20 px-2 py-0.5 rounded text-sm font-mono">{societyData?.id}</span></p>
+          {societyData?.address && (
+            <p className="text-xs mt-1 opacity-75 flex items-center gap-1"><MapPin size={12} /> {societyData.address.city}, {societyData.address.state} - {societyData.address.pincode}</p>
+          )}
         </div>
         <div className="absolute right-0 bottom-0 opacity-10 transform translate-x-10 translate-y-10">
           <Building size={200} />
@@ -600,6 +712,7 @@ export default function HumaraSocietyApp() {
   const [activeTab, setActiveTab] = useState(TABS.DASHBOARD);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [hasUnreadNotices, setHasUnreadNotices] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
 
   // Modals state
@@ -611,7 +724,8 @@ export default function HumaraSocietyApp() {
   const [loading, setLoading] = useState(false);
   const [profileError, setProfileError] = useState(null);
   const [showCompleteProfile, setShowCompleteProfile] = useState(false);
-  const [registerUnits, setRegisterUnits] = useState([]); // Valid units for registration
+  const [registerUnits, setRegisterUnits] = useState([]);
+  const [foundSocietyName, setFoundSocietyName] = useState('');
 
   // Footer Modals State (Needed for LandingPage & inside app)
   const [showPrivacy, setShowPrivacy] = useState(false);
@@ -698,7 +812,17 @@ export default function HumaraSocietyApp() {
     const safeSub = (q, set) => unsubs.push(onSnapshot(q, s => set(s.docs.map(d => ({ id: d.id, ...d.data() })))));
 
     unsubs.push(onSnapshot(doc(db, ...path, 'societies', sId), d => d.exists() && setSocietyData(d.data())));
-    safeSub(query(collection(db, ...path, `notices_${sId}`), orderBy('createdAt', 'desc')), setNotices);
+
+    // Notices with unread handling
+    unsubs.push(onSnapshot(query(collection(db, ...path, `notices_${sId}`), orderBy('createdAt', 'desc')), (snapshot) => {
+      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setNotices(data);
+      // If notifications list changes and we aren't viewing them, show dot
+      if (!showNotifications && data.length > 0) {
+        setHasUnreadNotices(true);
+      }
+    }));
+
     safeSub(query(collection(db, ...path, `events_${sId}`), orderBy('date', 'asc')), setEvents);
     safeSub(query(collection(db, ...path, `complaints_${sId}`), orderBy('createdAt', 'desc')), setComplaints);
     safeSub(query(collection(db, ...path, `bills_${sId}`), orderBy('dueDate', 'desc')), setBills);
@@ -723,9 +847,15 @@ export default function HumaraSocietyApp() {
     if (!code) return;
     try {
       const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'societies', code));
-      if (snap.exists() && snap.data().units) {
-        setRegisterUnits(snap.data().units.sort());
+      if (snap.exists()) {
+        setFoundSocietyName(snap.data().name);
+        if (snap.data().units) {
+          setRegisterUnits(snap.data().units.sort());
+        } else {
+          setRegisterUnits([]);
+        }
       } else {
+        setFoundSocietyName('');
         setRegisterUnits([]);
       }
     } catch (e) {
@@ -734,10 +864,38 @@ export default function HumaraSocietyApp() {
     }
   };
 
+  const handleSearchSociety = async (term) => {
+    if (!term) return;
+    try {
+      // Simple search by query for name
+      const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'societies'), where('name', '==', term));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const data = snap.docs[0].data();
+        setAuthForm(prev => ({ ...prev, societyCode: data.id }));
+        setFoundSocietyName(data.name);
+        alert(`Found: ${data.name}. Code: ${data.id}`);
+        fetchUnitsForSociety(data.id);
+      } else {
+        // Try pincode search if needed, but 'name' is primary requested
+        alert("No society found with that exact name.");
+      }
+    } catch (e) {
+      console.error("Search failed", e);
+    }
+  };
+
   const initializeUserDocs = async (uid, formData, finalSocId, role, status) => {
     const userPayload = { uid, email: formData.email || user.email, fullName: formData.fullName, societyId: finalSocId, unitNumber: formData.unitNumber || 'N/A', role, status, joinedAt: serverTimestamp() };
     if (authMode === 'create-society') {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'societies', finalSocId), { name: formData.societyName, id: finalSocId, funds: 0, maintenanceAmount: 0, lateFee: 0, creatorId: uid, createdAt: serverTimestamp(), units: [] });
+      const address = {
+        country: formData.country,
+        state: formData.state,
+        city: formData.city,
+        pincode: formData.pincode,
+        type: formData.societyType
+      };
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'societies', finalSocId), { name: formData.societyName, id: finalSocId, address: address, funds: 0, maintenanceAmount: 0, lateFee: 0, creatorId: uid, createdAt: serverTimestamp(), units: [] });
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', `amenities_${finalSocId}`), { name: 'Club House', capacity: 50, openTime: '09:00', closeTime: '22:00' });
     }
     await setDoc(doc(db, 'artifacts', appId, 'users', uid, 'settings', 'profile'), userPayload);
@@ -756,7 +914,19 @@ export default function HumaraSocietyApp() {
         if (!authForm.fullName) throw new Error("Full Name required.");
         let finalSocId = authForm.societyCode, role = ROLES.RESIDENT, status = MEMBER_STATUS.PENDING;
         if (authMode === 'create-society') {
-          if (!authForm.societyName) throw new Error("Society Name required.");
+          if (!authForm.societyName || !authForm.pincode) throw new Error("Society Name and Pincode required.");
+
+          // DUPLICATE CHECK
+          const dupQuery = query(
+            collection(db, 'artifacts', appId, 'public', 'data', 'societies'),
+            where('address.pincode', '==', authForm.pincode),
+            where('name', '==', authForm.societyName)
+          );
+          const dupSnap = await getDocs(dupQuery);
+          if (!dupSnap.empty) {
+            throw new Error("A society with this name already exists in this Pincode.");
+          }
+
           finalSocId = generateSocietyCode(); role = ROLES.ADMIN; status = MEMBER_STATUS.APPROVED;
         } else {
           if (!authForm.societyCode) throw new Error("Society Code required.");
@@ -779,6 +949,13 @@ export default function HumaraSocietyApp() {
       setShowAuthModal(false);
       setAuthForm({ email: '', password: '', fullName: '', societyName: '', societyCode: '', unitNumber: '' });
     } catch (e) { setAuthError(e.message); } finally { setLoading(false); }
+  };
+
+  const handleNotificationClick = () => {
+    setShowNotifications(!showNotifications);
+    if (!showNotifications) {
+      setHasUnreadNotices(false);
+    }
   };
 
   const handleCompleteProfile = async () => {
@@ -1007,7 +1184,7 @@ export default function HumaraSocietyApp() {
 
   // --- Render ---
   if (!authChecked) return null;
-  if (!user) return <AppWrapper darkMode={darkMode}><LandingPage onAuthClick={() => setShowAuthModal(true)} setAuthMode={setAuthMode} /><AuthModal show={showAuthModal} onClose={() => setShowAuthModal(false)} mode={authMode} setMode={setAuthMode} formData={authForm} setFormData={setAuthForm} onSubmit={handleAuthSubmit} loading={loading} error={authError} onCheckSocietyCode={fetchUnitsForSociety} availableUnits={registerUnits} /></AppWrapper>;
+  if (!user) return <AppWrapper darkMode={darkMode}><LandingPage onAuthClick={() => setShowAuthModal(true)} setAuthMode={setAuthMode} /><AuthModal show={showAuthModal} onClose={() => setShowAuthModal(false)} mode={authMode} setMode={setAuthMode} formData={authForm} setFormData={setAuthForm} onSubmit={handleAuthSubmit} loading={loading} error={authError} onCheckSocietyCode={fetchUnitsForSociety} onSearchSociety={handleSearchSociety} availableUnits={registerUnits} foundSocietyName={foundSocietyName} /></AppWrapper>;
 
   if (!userData) return <AppWrapper darkMode={darkMode}><div className="flex justify-center items-center h-screen">Loading Profile...</div></AppWrapper>;
 
@@ -1074,9 +1251,9 @@ export default function HumaraSocietyApp() {
               </button>
 
               <div className="relative">
-                <button onClick={() => setShowNotifications(!showNotifications)} className="text-gray-500 dark:text-gray-400 relative p-2 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-full transition">
+                <button onClick={handleNotificationClick} className="text-gray-500 dark:text-gray-400 relative p-2 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-full transition">
                   <Bell size={20} />
-                  {notices.length > 0 && <span className="absolute top-1 right-2 h-2 w-2 bg-red-500 rounded-full"></span>}
+                  {hasUnreadNotices && <span className="absolute top-1 right-2 h-2 w-2 bg-red-500 rounded-full"></span>}
                 </button>
                 {showNotifications && (
                   <div className="absolute right-0 top-12 w-80 bg-white dark:bg-slate-800 shadow-xl rounded-xl p-4 border dark:border-slate-700 z-50 animate-fade-in-up">
