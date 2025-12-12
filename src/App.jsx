@@ -66,24 +66,7 @@ import {
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
-// ************************************************************************************************
-// INSTRUCTIONS FOR FIREBASE CONFIGURATION
-//
-// 1. LOCAL DEVELOPMENT:
-//    - Create a file named '.env' in your project root.
-//    - Add the keys listed below (e.g. VITE_FIREBASE_API_KEY=AIzaSy...)
-//    - Restart your server (npm run dev).
-//
-// 2. VERCEL DEPLOYMENT:
-//    - Go to Settings -> Environment Variables.
-//    - Add the same keys and values there.
-//
-// 3. IF THE ABOVE IS TOO HARD (Quick Fix):
-//    - Scroll down to the "return" statement in this function.
-//    - Manually paste your strings inside the quotes (apiKey: "AIza...", etc).
-// ************************************************************************************************
 const getFirebaseConfig = () => {
-  // 1. Try Gemini Preview Env (Ignore this)
   try {
     if (typeof __firebase_config !== 'undefined') {
       return JSON.parse(__firebase_config);
@@ -91,32 +74,6 @@ const getFirebaseConfig = () => {
   } catch (e) {
     console.error("Firebase Config Error:", e);
   }
-
-  // 2. Try Vite Environment Variables (This works for Vercel & Local .env)
-  try {
-    // @ts-ignore
-    if (import.meta.env && import.meta.env.VITE_FIREBASE_API_KEY) {
-      return {
-        // @ts-ignore
-        apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-        // @ts-ignore
-        authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-        // @ts-ignore
-        projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-        // @ts-ignore
-        storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-        // @ts-ignore
-        messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-        // @ts-ignore
-        appId: import.meta.env.VITE_FIREBASE_APP_ID
-      };
-    }
-  } catch (e) {
-    // Ignore errors if import.meta is not available
-  }
-
-  // 3. Fallback / Hardcoded (If you didn't set up .env)
-  // PASTE YOUR DETAILS HERE IF YOU DON'T WANT TO USE .ENV FILES
   return {
     apiKey: "YOUR_API_KEY",
     authDomain: "YOUR_PROJECT.firebaseapp.com",
@@ -160,7 +117,6 @@ const TABS = {
 
 const STATUS = { OPEN: 'Open', IN_PROGRESS: 'In Progress', RESOLVED: 'Resolved', CLOSED: 'Closed' };
 const MEMBER_STATUS = { PENDING: 'pending', APPROVED: 'approved', REJECTED: 'rejected' };
-const PREDEFINED_AMENITIES = ["Gym", "Swimming Pool", "Club House", "Garden", "Tennis Court", "Badminton Court", "Community Hall", "Guest Parking", "Library"];
 
 // --- Reusable Components ---
 
@@ -179,7 +135,7 @@ const Modal = ({ isOpen, onClose, title, children }) => {
           <h3 className="text-lg font-bold text-gray-800 dark:text-white">{title}</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"><X size={20} /></button>
         </div>
-        <div className="p-4 overflow-y-auto">
+        <div className="p-4 overflow-y-auto space-y-4">
           {children}
         </div>
       </div>
@@ -203,7 +159,6 @@ const XIcon = ({ size = 24, className }) => (
 
 // --- EXTRACTED APP WRAPPER (Handles Dark Mode Globally) ---
 const AppWrapper = ({ children, darkMode }) => {
-  // Apply dark mode to HTML tag for global effect
   useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add('dark');
@@ -972,15 +927,64 @@ export default function HumaraSocietyApp() {
               </div>
             )}
 
-            {/* Other Tabs (Simplified for length, functionality preserved from previous) */}
             {activeTab === TABS.DASHBOARD && <DashboardView userData={userData} societyData={societyData} bills={bills} complaints={complaints} setActiveTab={setActiveTab} />}
+
             {activeTab === TABS.NOTICES && (
               <div className="space-y-4">
                 <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Notices</h2>{isAdmin && <button className="bg-indigo-600 text-white px-3 py-1 rounded" onClick={() => openModal('notice')}>Post</button>}</div>
-                {notices.map(n => <div key={n.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700"><h3 className="font-bold dark:text-white">{n.title}</h3><p className="text-gray-600 dark:text-gray-300">{n.content}</p></div>)}
+                {notices.map(n => <div key={n.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700"><h3 className="font-bold dark:text-white">{n.title}</h3><p className="text-gray-600 dark:text-gray-300">{n.content}</p><span className="text-xs text-gray-400 mt-2 block">{n.type} • {n.postedBy}</span></div>)}
               </div>
             )}
-            {/* ... (Directory, Rentals, Complaints, Elections mapped similarly) ... */}
+
+            {activeTab === TABS.COMPLAINTS && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Complaints</h2><button className="bg-red-600 text-white px-3 py-1 rounded" onClick={() => openModal('complaint')}>Report Issue</button></div>
+                {complaints.map(c => (
+                  <div key={c.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 flex justify-between">
+                    <div><h3 className="font-bold dark:text-white">{c.title}</h3><p className="text-gray-600 dark:text-gray-300">{c.description}</p></div>
+                    <Badge color={c.status === 'Open' ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}>{c.status}</Badge>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {activeTab === TABS.RENTALS && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Rental Listings</h2><button className="bg-emerald-600 text-white px-3 py-1 rounded" onClick={() => openModal('rental')}>List Property</button></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {rentals.map(r => (
+                    <div key={r.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700">
+                      <h3 className="font-bold dark:text-white">{r.type} - ₹{r.price}</h3>
+                      <p className="text-gray-600 dark:text-gray-300 text-sm">{r.description}</p>
+                      <button className="mt-2 text-emerald-600 text-sm font-bold">Contact: {r.ownerName}</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {activeTab === TABS.ELECTIONS && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Elections</h2>{isAdmin && <button className="bg-purple-600 text-white px-3 py-1 rounded" onClick={() => openModal('election')}>Create Poll</button>}</div>
+                {elections.map(e => (
+                  <div key={e.id} className="bg-white dark:bg-slate-800 p-6 rounded-xl border dark:border-slate-700">
+                    <h3 className="font-bold text-lg dark:text-white mb-2">{e.title} - {e.position}</h3>
+                    <div className="space-y-3">
+                      {e.candidates.map(c => (
+                        <div key={c.id} className="flex justify-between items-center bg-gray-50 dark:bg-slate-700 p-3 rounded-lg">
+                          <span className="dark:text-white">{c.name}</span>
+                          <div className="flex items-center gap-3">
+                            <span className="font-bold dark:text-white">{c.votes} votes</span>
+                            <button onClick={() => handleVote(e.id, c.id)} disabled={e.voters.includes(user.uid)} className="bg-emerald-600 disabled:opacity-50 text-white px-3 py-1 rounded text-sm">Vote</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
           </div>
         </main>
       </div>
@@ -991,28 +995,72 @@ export default function HumaraSocietyApp() {
           {modalState.type === 'set_maintenance' && (
             <>
               <label className="text-sm dark:text-white">Monthly Maintenance Amount (₹)</label>
-              <input type="number" className="w-full p-2 border rounded" onChange={e => setFormData({ ...formData, amount: e.target.value })} defaultValue={societyData.maintenanceAmount} />
+              <input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, amount: e.target.value })} defaultValue={societyData.maintenanceAmount} />
               <label className="text-sm dark:text-white">Late Fee Amount (₹)</label>
-              <input type="number" className="w-full p-2 border rounded" onChange={e => setFormData({ ...formData, lateFee: e.target.value })} defaultValue={societyData.lateFee} />
+              <input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, lateFee: e.target.value })} defaultValue={societyData.lateFee} />
             </>
           )}
           {modalState.type === 'generate_monthly' && (
             <>
               <p className="text-sm text-gray-500">Generating bills for {members.length} members.</p>
               <label className="text-sm dark:text-white">Due Date</label>
-              <input type="date" className="w-full p-2 border rounded" onChange={e => setFormData({ ...formData, dueDate: e.target.value })} />
+              <input type="date" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, dueDate: e.target.value })} />
             </>
           )}
           {modalState.type === 'add_funds' && (
             <>
-              <input type="number" className="w-full p-2 border rounded" placeholder="Amount (₹)" onChange={e => setFormData({ ...formData, amount: e.target.value })} />
+              <input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Amount (₹)" onChange={e => setFormData({ ...formData, amount: e.target.value })} />
             </>
           )}
-          {/* ... Other modal inputs (Notice, Expense, Complaint, etc. reuse previous logic) ... */}
-          {['notice', 'complaint', 'expense', 'rental', 'election'].includes(modalState.type) && (
-            // Simple fallback for other inputs to keep file short, user can expand
-            <div className="text-gray-500">Form fields for {modalState.type} (Use previous implementation)</div>
+          {/* Restored Inputs */}
+          {modalState.type === 'notice' && (
+            <>
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Notice Title" onChange={e => setFormData({ ...formData, title: e.target.value })} />
+              <textarea className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Notice Content" rows={4} onChange={e => setFormData({ ...formData, content: e.target.value })} />
+              <select className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, type: e.target.value })}>
+                <option value="General">General</option>
+                <option value="Urgent">Urgent</option>
+                <option value="Event">Event</option>
+              </select>
+            </>
           )}
+          {modalState.type === 'complaint' && (
+            <>
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Subject" onChange={e => setFormData({ ...formData, title: e.target.value })} />
+              <textarea className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Describe the issue..." rows={4} onChange={e => setFormData({ ...formData, description: e.target.value })} />
+              <select className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, priority: e.target.value })}>
+                <option value="Low">Low Priority</option>
+                <option value="Medium">Medium Priority</option>
+                <option value="High">High Priority</option>
+              </select>
+            </>
+          )}
+          {modalState.type === 'expense' && (
+            <>
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Expense Title" onChange={e => setFormData({ ...formData, title: e.target.value })} />
+              <input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Amount (₹)" onChange={e => setFormData({ ...formData, amount: e.target.value })} />
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="split" onChange={e => setFormData({ ...formData, split: e.target.checked })} />
+                <label htmlFor="split" className="dark:text-white">Split cost among all members?</label>
+              </div>
+            </>
+          )}
+          {modalState.type === 'rental' && (
+            <>
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Apartment Type (e.g. 2BHK)" onChange={e => setFormData({ ...formData, type: e.target.value })} />
+              <input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Rent (₹/month)" onChange={e => setFormData({ ...formData, price: e.target.value })} />
+              <textarea className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Description/Amenities" onChange={e => setFormData({ ...formData, description: e.target.value })} />
+            </>
+          )}
+          {modalState.type === 'election' && (
+            <>
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Election Title" onChange={e => setFormData({ ...formData, title: e.target.value })} />
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Position (e.g. Secretary)" onChange={e => setFormData({ ...formData, position: e.target.value })} />
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Candidates (comma separated)" onChange={e => setFormData({ ...formData, candidatesString: e.target.value })} />
+              <p className="text-xs text-gray-500">Example: John Doe, Jane Smith, Robert Brown</p>
+            </>
+          )}
+
           <button onClick={handleSubmitModal} className="w-full bg-emerald-600 text-white py-2 rounded">Submit</button>
         </div>
       </Modal>
