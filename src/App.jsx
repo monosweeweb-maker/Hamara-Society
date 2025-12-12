@@ -63,7 +63,9 @@ import {
   Home,
   Check,
   Settings,
-  DollarSign
+  DollarSign,
+  UserPlus,
+  Briefcase
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -121,7 +123,8 @@ const ROLES = {
   TREASURER: 'Treasurer',
   RESIDENT: 'Resident',
   TENANT: 'Tenant',
-  STAFF: 'Staff'
+  STAFF: 'Staff',
+  SECURITY: 'Security'
 };
 
 const TABS = {
@@ -130,7 +133,7 @@ const TABS = {
   COMPLAINTS: 'complaints',
   FINANCE: 'finance',
   DIRECTORY: 'directory',
-  REQUESTS: 'requests',
+  APPROVALS: 'approvals',
   AMENITIES: 'amenities',
   ELECTIONS: 'elections',
   CLASSIFIEDS: 'classifieds',
@@ -141,6 +144,8 @@ const TABS = {
 
 const STATUS = { OPEN: 'Open', IN_PROGRESS: 'In Progress', RESOLVED: 'Resolved', CLOSED: 'Closed' };
 const MEMBER_STATUS = { PENDING: 'pending', APPROVED: 'approved', REJECTED: 'rejected' };
+
+const AMENITY_TYPES = ["Swimming Pool", "Gym", "Club House", "Tennis Court", "Parking Lot", "Garden", "Other"];
 
 // --- Reusable Components ---
 
@@ -581,7 +586,9 @@ export default function HumaraSocietyApp() {
   const [bills, setBills] = useState([]);
   const [amenities, setAmenities] = useState([]);
   const [rentals, setRentals] = useState([]);
-  const [elections, setElections] = useState([]); // Elections
+  const [elections, setElections] = useState([]);
+  const [classifieds, setClassifieds] = useState([]);
+  const [visitors, setVisitors] = useState([]);
 
   // --- Init ---
   useEffect(() => {
@@ -654,6 +661,8 @@ export default function HumaraSocietyApp() {
     safeSub(collection(db, ...path, `amenities_${sId}`), setAmenities);
     safeSub(query(collection(db, ...path, `rentals_${sId}`), orderBy('createdAt', 'desc')), setRentals);
     safeSub(query(collection(db, ...path, `elections_${sId}`), orderBy('createdAt', 'desc')), setElections);
+    safeSub(query(collection(db, ...path, `classifieds_${sId}`), orderBy('createdAt', 'desc')), setClassifieds);
+    safeSub(query(collection(db, ...path, `visitors_${sId}`), orderBy('createdAt', 'desc')), setVisitors);
 
     const profiles = collection(db, 'artifacts', appId, 'public', 'data', 'profiles');
     safeSub(query(profiles, where('societyId', '==', sId), where('status', '==', MEMBER_STATUS.APPROVED)), setMembers);
@@ -773,6 +782,12 @@ export default function HumaraSocietyApp() {
     alert("Vote Casted Successfully!");
   };
 
+  const handleVisitorEntry = async (visitorId, isExit = false) => {
+    const sId = userData.societyId;
+    const updateData = isExit ? { exitTime: serverTimestamp(), status: 'Exited' } : { entryTime: serverTimestamp(), status: 'Entered' };
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `visitors_${sId}`, visitorId), updateData);
+  };
+
   const handleSubmitModal = async () => {
     const sId = userData.societyId;
     const path = ['artifacts', appId, 'public', 'data'];
@@ -795,7 +810,6 @@ export default function HumaraSocietyApp() {
       } else if (modalState.type === 'rental') {
         await addDoc(collection(db, ...path, `rentals_${sId}`), { ...formData, ownerId: user.uid, ownerName: userData.fullName, contact: userData.email, createdAt: serverTimestamp() });
       } else if (modalState.type === 'election') {
-        // Parse candidates
         const candidates = formData.candidatesString.split(',').map((name, idx) => ({ id: idx, name: name.trim(), votes: 0 }));
         await addDoc(collection(db, ...path, `elections_${sId}`), {
           title: formData.title,
@@ -806,19 +820,32 @@ export default function HumaraSocietyApp() {
           createdAt: serverTimestamp()
         });
       } else if (modalState.type === 'amenity') {
-        await addDoc(collection(db, ...path, `amenities_${sId}`), formData);
+        const finalFormData = { ...formData };
+        if (finalFormData.name === 'Other') finalFormData.name = finalFormData.customName;
+        await addDoc(collection(db, ...path, `amenities_${sId}`), finalFormData);
       } else if (modalState.type === 'add_funds') {
         const amount = parseFloat(formData.amount);
-        // Simple update to funds, in a real app you'd log the transaction type (Cash/Bank)
         await updateDoc(doc(db, ...path, 'societies', sId), { funds: increment(amount) });
         alert(`Added ₹${amount} via ${formData.fundType || 'Cash in Hand'}`);
+      } else if (modalState.type === 'classified') {
+        await addDoc(collection(db, ...path, `classifieds_${sId}`), { ...formData, ownerId: user.uid, ownerName: userData.fullName, contact: userData.email, createdAt: serverTimestamp() });
+      } else if (modalState.type === 'visitor_preapprove' || modalState.type === 'visitor_entry') {
+        const visitorData = {
+          ...formData,
+          status: modalState.type === 'visitor_entry' ? 'Entered' : 'Expected',
+          entryTime: modalState.type === 'visitor_entry' ? serverTimestamp() : null,
+          hostId: modalState.type === 'visitor_preapprove' ? user.uid : formData.hostId, // Security selects host
+          hostUnit: modalState.type === 'visitor_preapprove' ? userData.unitNumber : formData.hostUnit,
+          createdBy: userData.fullName,
+          createdAt: serverTimestamp()
+        };
+        await addDoc(collection(db, ...path, `visitors_${sId}`), visitorData);
       }
       closeModal();
     } catch (e) { alert("Error: " + e.message); }
   };
 
   const handlePayBill = async (bill) => {
-    // Payment Approval Flow
     if (bill.status === 'Pending Approval') return alert("Payment is already pending approval.");
     const confirmPayment = confirm(`Pay ₹${bill.amount}? If you have Advance Balance (₹${userData.advanceBalance || 0}), it will be used.`);
     if (!confirmPayment) return;
@@ -827,20 +854,17 @@ export default function HumaraSocietyApp() {
     const billRef = doc(db, 'artifacts', appId, 'public', 'data', `bills_${sId}`, bill.id);
 
     if ((userData.advanceBalance || 0) >= bill.amount) {
-      // Pay from Advance
       await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile'), { advanceBalance: increment(-bill.amount) });
       await updateDoc(billRef, { status: 'Paid', paidAt: serverTimestamp(), paymentMode: 'Advance' });
       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'societies', sId), { funds: increment(bill.amount) });
       alert("Paid from Advance Balance!");
     } else {
-      // Request Approval
       await updateDoc(billRef, { status: 'Pending Approval', paidAt: serverTimestamp() });
       alert("Payment marked! Admin must approve to finalize.");
     }
   };
 
   const handleApprovePayment = async (bill) => {
-    // Admin approves payment -> Money goes to Society Funds
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `bills_${userData.societyId}`, bill.id), { status: 'Paid' });
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'societies', userData.societyId), { funds: increment(parseFloat(bill.amount)) });
   };
@@ -860,7 +884,6 @@ export default function HumaraSocietyApp() {
 
   const handleSOS = () => {
     if (confirm("Send EMERGENCY SOS alert to all admins and security?")) {
-      // In a real app, this would trigger a cloud function or push notification
       alert("SOS Alert Sent! Help is on the way.");
     }
   };
@@ -869,24 +892,23 @@ export default function HumaraSocietyApp() {
   if (!authChecked) return null;
   if (!user) return <AppWrapper darkMode={darkMode}><LandingPage onAuthClick={() => setShowAuthModal(true)} setAuthMode={setAuthMode} /><AuthModal show={showAuthModal} onClose={() => setShowAuthModal(false)} mode={authMode} setMode={setAuthMode} formData={authForm} setFormData={setAuthForm} onSubmit={handleAuthSubmit} loading={loading} error={authError} /></AppWrapper>;
 
-  if (!userData) return <AppWrapper darkMode={darkMode}><div className="flex justify-center items-center h-screen">Loading Profile...</div></AppWrapper>; // Simplified profile load
+  if (!userData) return <AppWrapper darkMode={darkMode}><div className="flex justify-center items-center h-screen">Loading Profile...</div></AppWrapper>;
 
   if (userData.status !== MEMBER_STATUS.APPROVED) return <AppWrapper darkMode={darkMode}><div className="flex justify-center items-center h-screen">Status: {userData.status} <button onClick={() => signOut(auth)} className="ml-4 underline">Sign Out</button></div></AppWrapper>;
 
   const isAdmin = [ROLES.ADMIN, ROLES.TREASURER].includes(userData.role);
+  const isSecurity = [ROLES.SECURITY, ROLES.STAFF].includes(userData.role);
 
   return (
     <AppWrapper darkMode={darkMode}>
       <div className="flex h-screen overflow-hidden">
         {/* Sidebar */}
         <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-slate-900 dark:bg-slate-950 text-white transition-transform transform ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 border-r dark:border-slate-800`}>
-          {/* ... Sidebar Header ... */}
           <div className="p-6 border-b border-slate-800 flex items-center justify-between">
             <div className="flex items-center gap-2"><div className="h-8 w-8 bg-emerald-500 rounded flex items-center justify-center font-bold">H</div><span className="font-bold text-lg">Humara Society</span></div>
             <button onClick={() => setMobileMenuOpen(false)} className="md:hidden text-gray-400"><X size={20} /></button>
           </div>
           <nav className="flex-1 overflow-y-auto py-4">
-            {/* ... Navigation Links ... */}
             <ul className="space-y-1 px-3">
               {[
                 { id: TABS.DASHBOARD, icon: LayoutDashboard, label: 'Dashboard' },
@@ -894,10 +916,13 @@ export default function HumaraSocietyApp() {
                 { id: TABS.NOTICES, icon: Megaphone, label: 'Notices' },
                 { id: TABS.COMPLAINTS, icon: AlertTriangle, label: 'Complaints' },
                 { id: TABS.DIRECTORY, icon: Users, label: 'Directory' },
+                { id: TABS.APPROVALS, icon: UserPlus, label: 'Approvals', role: [ROLES.ADMIN] },
+                { id: TABS.VISITORS, icon: UserCheck, label: 'Visitors' },
+                { id: TABS.CLASSIFIEDS, icon: ShoppingBag, label: 'Classifieds' },
                 { id: TABS.RENTALS, icon: Home, label: 'Rentals' },
                 { id: TABS.AMENITIES, icon: Calendar, label: 'Amenities' },
                 { id: TABS.ELECTIONS, icon: Vote, label: 'Elections' },
-              ].map((item) => (
+              ].filter(item => !item.role || item.role.includes(userData.role)).map((item) => (
                 <li key={item.id}>
                   <button onClick={() => { setActiveTab(item.id); setMobileMenuOpen(false); }} className={`flex items-center justify-between w-full px-4 py-3 rounded-lg text-sm font-medium transition ${activeTab === item.id ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
                     <div className="flex items-center gap-3"><item.icon size={18} />{item.label}</div>
@@ -922,25 +947,23 @@ export default function HumaraSocietyApp() {
               <h2 className="text-xl font-bold text-gray-800 dark:text-white hidden md:block">{societyData?.name}</h2>
             </div>
             <div className="flex items-center gap-4">
-              {/* Header Icons */}
               <button onClick={() => setDarkMode(!darkMode)} className="md:hidden p-2 text-gray-600 dark:text-gray-300">{darkMode ? <Sun size={20} /> : <Moon size={20} />}</button>
 
-              {/* SOS Button */}
-              <button onClick={handleSOS} className="text-red-600 hover:text-red-700 animate-pulse" title="Emergency SOS">
-                <ShieldAlert size={24} />
+              {/* Highlighted SOS Button */}
+              <button onClick={handleSOS} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-full font-bold flex items-center gap-2 animate-pulse shadow-lg shadow-red-500/30 transition-all transform hover:scale-105">
+                <ShieldAlert size={20} /> SOS
               </button>
 
               <div className="relative">
-                <button onClick={() => setShowNotifications(!showNotifications)} className="text-gray-500 dark:text-gray-400 relative">
+                <button onClick={() => setShowNotifications(!showNotifications)} className="text-gray-500 dark:text-gray-400 relative p-2 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-full transition">
                   <Bell size={20} />
-                  {notices.length > 0 && <span className="absolute -top-1 -right-1 h-2 w-2 bg-red-500 rounded-full"></span>}
+                  {notices.length > 0 && <span className="absolute top-1 right-2 h-2 w-2 bg-red-500 rounded-full"></span>}
                 </button>
-                {/* Notification Dropdown */}
                 {showNotifications && (
-                  <div className="absolute right-0 top-10 w-80 bg-white dark:bg-slate-800 shadow-xl rounded-xl p-4 border dark:border-slate-700 z-50">
+                  <div className="absolute right-0 top-12 w-80 bg-white dark:bg-slate-800 shadow-xl rounded-xl p-4 border dark:border-slate-700 z-50 animate-fade-in-up">
                     <div className="flex justify-between items-center mb-2">
                       <h3 className="font-bold dark:text-white">Notifications</h3>
-                      <button onClick={() => setShowNotifications(false)}><X size={16} className="text-gray-500" /></button>
+                      <button onClick={() => setShowNotifications(false)}><X size={16} className="text-gray-500 hover:text-gray-700" /></button>
                     </div>
                     {notices.length === 0 ? <p className="text-sm text-gray-500">No new notices.</p> : (
                       <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
@@ -960,7 +983,9 @@ export default function HumaraSocietyApp() {
           </header>
 
           <div className="flex-1 overflow-y-auto p-4 md:p-8">
-            {/* FINANCE TAB - New Implementation */}
+            {activeTab === TABS.DASHBOARD && <DashboardView userData={userData} societyData={societyData} bills={bills} complaints={complaints} setActiveTab={setActiveTab} />}
+
+            {/* FINANCE TAB */}
             {activeTab === TABS.FINANCE && (
               <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -976,18 +1001,18 @@ export default function HumaraSocietyApp() {
 
                 {isAdmin && (
                   <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 flex flex-wrap gap-3">
-                    <button onClick={() => openModal('add_funds')} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2"><DollarSign size={16} /> Add Funds</button>
-                    <button onClick={() => openModal('expense')} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2"><CreditCard size={16} /> Record Expense</button>
-                    <button onClick={() => openModal('generate_monthly')} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2"><FileText size={16} /> Generate Monthly Bills</button>
-                    <button onClick={() => openModal('set_maintenance')} className="bg-gray-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2"><Settings size={16} /> Settings</button>
-                    <button onClick={calculateLateFees} className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2"><Clock size={16} /> Apply Late Fees</button>
+                    <button onClick={() => openModal('add_funds')} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-emerald-700 transition"><DollarSign size={16} /> Add Funds</button>
+                    <button onClick={() => openModal('expense')} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-red-700 transition"><CreditCard size={16} /> Record Expense</button>
+                    <button onClick={() => openModal('generate_monthly')} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-blue-700 transition"><FileText size={16} /> Generate Bills</button>
+                    <button onClick={() => openModal('set_maintenance')} className="bg-gray-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-gray-700 transition"><Settings size={16} /> Settings</button>
+                    <button onClick={calculateLateFees} className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-orange-700 transition"><Clock size={16} /> Apply Late Fees</button>
                   </div>
                 )}
 
                 <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 overflow-hidden">
                   <div className="p-4 border-b dark:border-slate-700 font-bold dark:text-white">All Bills</div>
                   {bills.map(bill => (
-                    <div key={bill.id} className="p-4 border-b dark:border-slate-700 flex justify-between items-center">
+                    <div key={bill.id} className="p-4 border-b dark:border-slate-700 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-slate-700/50 transition">
                       <div>
                         <h4 className="font-bold dark:text-white">{bill.title}</h4>
                         <p className="text-sm text-gray-500">Unit: {bill.unitNumber} • {bill.userName}</p>
@@ -997,9 +1022,9 @@ export default function HumaraSocietyApp() {
                         <p className="font-bold dark:text-white">₹{bill.amount}</p>
                         {bill.status === 'Paid' ? <Badge color="bg-green-100 text-green-800">Paid</Badge> :
                           bill.status === 'Pending Approval' ?
-                            (isAdmin ? <button onClick={() => handleApprovePayment(bill)} className="text-xs bg-blue-600 text-white px-3 py-1 rounded">Approve</button> : <Badge color="bg-yellow-100 text-yellow-800">Pending</Badge>)
+                            (isAdmin ? <button onClick={() => handleApprovePayment(bill)} className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">Approve</button> : <Badge color="bg-yellow-100 text-yellow-800">Pending</Badge>)
                             :
-                            (bill.userId === user.uid ? <button onClick={() => handlePayBill(bill)} className="text-xs bg-emerald-600 text-white px-3 py-1 rounded">Pay</button> : <Badge color="bg-red-100 text-red-800">Unpaid</Badge>)
+                            (bill.userId === user.uid ? <button onClick={() => handlePayBill(bill)} className="text-xs bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700">Pay</button> : <Badge color="bg-red-100 text-red-800">Unpaid</Badge>)
                         }
                       </div>
                     </div>
@@ -1008,24 +1033,115 @@ export default function HumaraSocietyApp() {
               </div>
             )}
 
-            {activeTab === TABS.DASHBOARD && <DashboardView userData={userData} societyData={societyData} bills={bills} complaints={complaints} setActiveTab={setActiveTab} />}
-
+            {/* NOTICES TAB */}
             {activeTab === TABS.NOTICES && (
               <div className="space-y-4">
-                <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Notices</h2>{isAdmin && <button className="bg-indigo-600 text-white px-3 py-1 rounded" onClick={() => openModal('notice')}>Post</button>}</div>
-                {notices.map(n => <div key={n.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700"><h3 className="font-bold dark:text-white">{n.title}</h3><p className="text-gray-600 dark:text-gray-300">{n.content}</p><span className="text-xs text-gray-400 mt-2 block">{n.type} • {n.postedBy}</span></div>)}
+                <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Notices</h2>{isAdmin && <button className="bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700" onClick={() => openModal('notice')}>Post</button>}</div>
+                {notices.map(n => <div key={n.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 shadow-sm"><h3 className="font-bold dark:text-white">{n.title}</h3><p className="text-gray-600 dark:text-gray-300 mt-2">{n.content}</p><span className="text-xs text-gray-400 mt-3 block flex items-center gap-1"><UserCheck size={12} /> {n.postedBy} • {n.type}</span></div>)}
               </div>
             )}
 
+            {/* COMPLAINTS TAB */}
             {activeTab === TABS.COMPLAINTS && (
               <div className="space-y-4">
-                <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Complaints</h2><button className="bg-red-600 text-white px-3 py-1 rounded" onClick={() => openModal('complaint')}>Report Issue</button></div>
+                <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Complaints</h2><button className="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700" onClick={() => openModal('complaint')}>Report Issue</button></div>
                 {complaints.map(c => (
-                  <div key={c.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 flex justify-between">
-                    <div><h3 className="font-bold dark:text-white">{c.title}</h3><p className="text-gray-600 dark:text-gray-300">{c.description}</p></div>
+                  <div key={c.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 flex justify-between shadow-sm">
+                    <div><h3 className="font-bold dark:text-white">{c.title}</h3><p className="text-gray-600 dark:text-gray-300 mt-1">{c.description}</p></div>
                     <Badge color={c.status === 'Open' ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}>{c.status}</Badge>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* APPROVALS TAB */}
+            {activeTab === TABS.APPROVALS && isAdmin && (
+              <div className="space-y-6">
+                <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Pending Approvals</h2></div>
+                {pendingMembers.length === 0 ? (
+                  <div className="text-center py-10 text-gray-500 bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700">No pending approvals.</div>
+                ) : (
+                  pendingMembers.map(m => (
+                    <div key={m.uid} className="flex flex-col md:flex-row justify-between items-center bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm gap-4 border dark:border-slate-700">
+                      <div className="dark:text-white">
+                        <p className="font-bold text-lg">{m.fullName}</p>
+                        <p className="text-sm text-gray-500">Unit: {m.unitNumber} • {m.email}</p>
+                      </div>
+                      <div className="flex gap-3">
+                        <button onClick={() => handleApproveMember(m.uid)} className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition flex items-center gap-2"><Check size={16} /> Approve</button>
+                        <button onClick={() => handleRejectMember(m.uid)} className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition flex items-center gap-2"><X size={16} /> Reject</button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* VISITORS TAB */}
+            {activeTab === TABS.VISITORS && (
+              <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-xl font-bold dark:text-white">Visitors</h2>
+                  {/* Security adds random visitor, Resident pre-approves */}
+                  <button className="bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700 transition" onClick={() => openModal(isSecurity ? 'visitor_entry' : 'visitor_preapprove')}>
+                    {isSecurity ? '+ Add Entry' : '+ Pre-approve Visitor'}
+                  </button>
+                </div>
+
+                <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 overflow-hidden">
+                  {visitors.length === 0 ? <p className="p-6 text-center text-gray-500">No visitor logs.</p> : (
+                    visitors.map(v => (
+                      <div key={v.id} className="p-4 border-b dark:border-slate-700 last:border-0 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                        <div>
+                          <h4 className="font-bold dark:text-white flex items-center gap-2">{v.name} <Badge color="bg-blue-100 text-blue-800">{v.type}</Badge></h4>
+                          <p className="text-sm text-gray-500">Host: {v.hostUnit} ({v.hostId ? 'Resident' : 'Walk-in'})</p>
+                          <p className="text-xs text-gray-400">Entry: {v.entryTime ? new Date(v.entryTime.seconds * 1000).toLocaleString() : 'Expected'}</p>
+                        </div>
+                        <div className="text-right">
+                          <span className={`px-2 py-1 rounded text-xs font-bold ${v.status === 'Entered' ? 'bg-green-100 text-green-700' : v.status === 'Exited' ? 'bg-gray-200 text-gray-600' : 'bg-yellow-100 text-yellow-700'}`}>{v.status}</span>
+                          {isSecurity && v.status === 'Entered' && (
+                            <button onClick={() => handleVisitorEntry(v.id, true)} className="ml-3 text-xs bg-red-100 text-red-600 px-2 py-1 rounded hover:bg-red-200">Exit</button>
+                          )}
+                          {isSecurity && v.status === 'Expected' && (
+                            <button onClick={() => handleVisitorEntry(v.id, false)} className="ml-3 text-xs bg-green-100 text-green-600 px-2 py-1 rounded hover:bg-green-200">Enter</button>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* CLASSIFIEDS TAB */}
+            {activeTab === TABS.CLASSIFIEDS && (
+              <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-xl font-bold dark:text-white">Classifieds</h2>
+                  <button className="bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700 transition" onClick={() => openModal('classified')}>+ Sell/Ad</button>
+                </div>
+                {classifieds.length === 0 ? (
+                  <div className="text-center py-10 text-gray-500 dark:text-gray-400 bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700">
+                    <ShoppingBag size={48} className="mx-auto mb-2 opacity-50" />
+                    <p>No listings available.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {classifieds.map(item => (
+                      <div key={item.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 shadow-sm hover:shadow-md transition">
+                        <div className="flex justify-between items-start">
+                          <h3 className="font-bold dark:text-white text-lg">{item.title}</h3>
+                          <Badge color={item.type === 'Sell' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}>{item.type}</Badge>
+                        </div>
+                        <p className="text-xl font-bold text-emerald-600 mt-1">₹{item.price}</p>
+                        <p className="text-gray-600 dark:text-gray-300 text-sm mt-2 line-clamp-2">{item.description}</p>
+                        <div className="mt-4 pt-3 border-t dark:border-slate-700 text-xs text-gray-500">
+                          Contact: {item.ownerName}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1033,24 +1149,6 @@ export default function HumaraSocietyApp() {
             {activeTab === TABS.DIRECTORY && (
               <div className="space-y-6">
                 <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Directory</h2></div>
-
-                {isAdmin && pendingMembers.length > 0 && (
-                  <div className="bg-yellow-50 dark:bg-yellow-900/20 p-4 rounded-xl border border-yellow-200 dark:border-yellow-800">
-                    <h3 className="font-bold text-yellow-800 dark:text-yellow-200 mb-4">Pending Approvals</h3>
-                    {pendingMembers.map(m => (
-                      <div key={m.uid} className="flex flex-col md:flex-row justify-between items-center bg-white dark:bg-slate-800 p-3 rounded mb-2 shadow-sm gap-2">
-                        <div className="text-sm dark:text-white">
-                          <span className="font-bold">{m.fullName}</span> ({m.unitNumber}) - {m.email}
-                        </div>
-                        <div className="flex gap-2 w-full md:w-auto">
-                          <button onClick={() => handleApproveMember(m.uid)} className="flex-1 md:flex-none bg-green-600 text-white px-3 py-1.5 rounded text-xs hover:bg-green-700">Approve</button>
-                          <button onClick={() => handleRejectMember(m.uid)} className="flex-1 md:flex-none bg-red-600 text-white px-3 py-1.5 rounded text-xs hover:bg-red-700">Reject</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {members.map(m => (
                     <div key={m.uid} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 flex items-center gap-4 hover:shadow-md transition">
@@ -1071,7 +1169,7 @@ export default function HumaraSocietyApp() {
             {/* RENTALS TAB */}
             {activeTab === TABS.RENTALS && (
               <div className="space-y-4">
-                <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Rental Listings</h2><button className="bg-emerald-600 text-white px-3 py-1 rounded" onClick={() => openModal('rental')}>List Property</button></div>
+                <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Rentals</h2><button className="bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700" onClick={() => openModal('rental')}>List Property</button></div>
                 {rentals.length === 0 ? (
                   <div className="text-center py-10 text-gray-500 dark:text-gray-400 bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700">
                     <Home size={48} className="mx-auto mb-2 opacity-50" />
@@ -1080,10 +1178,13 @@ export default function HumaraSocietyApp() {
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {rentals.map(r => (
-                      <div key={r.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700">
-                        <h3 className="font-bold dark:text-white">{r.type} - ₹{r.price}</h3>
-                        <p className="text-gray-600 dark:text-gray-300 text-sm">{r.description}</p>
-                        <button className="mt-2 text-emerald-600 text-sm font-bold">Contact: {r.ownerName}</button>
+                      <div key={r.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 shadow-sm">
+                        <div className="flex justify-between">
+                          <h3 className="font-bold dark:text-white">{r.type} <span className="text-sm font-normal text-gray-500">({r.category})</span></h3>
+                          <span className="text-emerald-600 font-bold">₹{r.price}/mo</span>
+                        </div>
+                        <p className="text-gray-600 dark:text-gray-300 text-sm mt-2">{r.description}</p>
+                        <button className="mt-3 text-emerald-600 text-sm font-bold hover:underline">Contact: {r.ownerName}</button>
                       </div>
                     ))}
                   </div>
@@ -1096,7 +1197,7 @@ export default function HumaraSocietyApp() {
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <h2 className="text-xl font-bold dark:text-white">Amenities</h2>
-                  {isAdmin && <button className="bg-emerald-600 text-white px-3 py-1 rounded" onClick={() => openModal('amenity')}>Add Amenity</button>}
+                  {isAdmin && <button className="bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700" onClick={() => openModal('amenity')}>Add Amenity</button>}
                 </div>
                 {amenities.length === 0 ? (
                   <div className="text-center py-10 text-gray-500 dark:text-gray-400 bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700">
@@ -1106,11 +1207,11 @@ export default function HumaraSocietyApp() {
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {amenities.map(a => (
-                      <div key={a.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700">
+                      <div key={a.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 shadow-sm">
                         <h3 className="font-bold text-lg dark:text-white">{a.name}</h3>
                         <div className="mt-2 space-y-1 text-sm text-gray-600 dark:text-gray-300">
                           <p>Capacity: {a.capacity} people</p>
-                          <p>Timings: {a.openTime} - {a.closeTime}</p>
+                          <p>Timings: {a.is24x7 ? <span className="text-green-600 font-bold">24x7 Open</span> : `${a.openTime} - ${a.closeTime}`}</p>
                         </div>
                       </div>
                     ))}
@@ -1119,11 +1220,12 @@ export default function HumaraSocietyApp() {
               </div>
             )}
 
+            {/* ELECTIONS TAB */}
             {activeTab === TABS.ELECTIONS && (
               <div className="space-y-4">
-                <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Elections</h2>{isAdmin && <button className="bg-purple-600 text-white px-3 py-1 rounded" onClick={() => openModal('election')}>Create Poll</button>}</div>
+                <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Elections</h2>{isAdmin && <button className="bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700" onClick={() => openModal('election')}>Create Poll</button>}</div>
                 {elections.map(e => (
-                  <div key={e.id} className="bg-white dark:bg-slate-800 p-6 rounded-xl border dark:border-slate-700">
+                  <div key={e.id} className="bg-white dark:bg-slate-800 p-6 rounded-xl border dark:border-slate-700 shadow-sm">
                     <h3 className="font-bold text-lg dark:text-white mb-2">{e.title} - {e.position}</h3>
                     <div className="space-y-3">
                       {e.candidates.map(c => (
@@ -1131,7 +1233,7 @@ export default function HumaraSocietyApp() {
                           <span className="dark:text-white">{c.name}</span>
                           <div className="flex items-center gap-3">
                             <span className="font-bold dark:text-white">{c.votes} votes</span>
-                            <button onClick={() => handleVote(e.id, c.id)} disabled={e.voters.includes(user.uid)} className="bg-emerald-600 disabled:opacity-50 text-white px-3 py-1 rounded text-sm">Vote</button>
+                            <button onClick={() => handleVote(e.id, c.id)} disabled={e.voters.includes(user.uid)} className="bg-emerald-600 disabled:opacity-50 text-white px-3 py-1 rounded text-sm hover:bg-emerald-700">Vote</button>
                           </div>
                         </div>
                       ))}
@@ -1192,7 +1294,6 @@ export default function HumaraSocietyApp() {
               </div>
             </>
           )}
-          {/* Restored Inputs */}
           {modalState.type === 'notice' && (
             <>
               <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Notice Title" onChange={e => setFormData({ ...formData, title: e.target.value })} />
@@ -1227,19 +1328,38 @@ export default function HumaraSocietyApp() {
           )}
           {modalState.type === 'rental' && (
             <>
-              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Apartment Type (e.g. 2BHK)" onChange={e => setFormData({ ...formData, type: e.target.value })} />
+              <select className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, category: e.target.value })}>
+                <option value="">Select Category</option>
+                <option value="Property/Flat">Property/Flat</option>
+                <option value="Parking">Parking</option>
+              </select>
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Type (e.g. 2BHK / Covered Slot)" onChange={e => setFormData({ ...formData, type: e.target.value })} />
               <input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Rent (₹/month)" onChange={e => setFormData({ ...formData, price: e.target.value })} />
-              <textarea className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Description/Amenities" onChange={e => setFormData({ ...formData, description: e.target.value })} />
+              <textarea className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Description/Details" onChange={e => setFormData({ ...formData, description: e.target.value })} />
             </>
           )}
           {modalState.type === 'amenity' && (
             <>
-              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Amenity Name (e.g. Gym)" onChange={e => setFormData({ ...formData, name: e.target.value })} />
+              <select className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, name: e.target.value })}>
+                <option value="">Select Amenity</option>
+                {AMENITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              {formData.name === 'Other' && (
+                <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Specify Amenity Name" onChange={e => setFormData({ ...formData, customName: e.target.value })} />
+              )}
               <input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Capacity (persons)" onChange={e => setFormData({ ...formData, capacity: e.target.value })} />
-              <div className="grid grid-cols-2 gap-2">
-                <input type="time" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, openTime: e.target.value })} />
-                <input type="time" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, closeTime: e.target.value })} />
+
+              <div className="flex items-center gap-2 mt-2">
+                <input type="checkbox" id="is24x7" onChange={e => setFormData({ ...formData, is24x7: e.target.checked })} />
+                <label htmlFor="is24x7" className="dark:text-white">24x7 Open</label>
               </div>
+
+              {!formData.is24x7 && (
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <input type="time" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, openTime: e.target.value })} />
+                  <input type="time" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, closeTime: e.target.value })} />
+                </div>
+              )}
             </>
           )}
           {modalState.type === 'election' && (
@@ -1250,8 +1370,41 @@ export default function HumaraSocietyApp() {
               <p className="text-xs text-gray-500">Example: John Doe, Jane Smith, Robert Brown</p>
             </>
           )}
+          {modalState.type === 'classified' && (
+            <>
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Item Title" onChange={e => setFormData({ ...formData, title: e.target.value })} />
+              <textarea className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Description" rows={3} onChange={e => setFormData({ ...formData, description: e.target.value })} />
+              <div className="flex gap-4">
+                <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" type="number" placeholder="Price (₹)" onChange={e => setFormData({ ...formData, price: e.target.value })} />
+                <select className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, type: e.target.value })}>
+                  <option value="Sell">Sell</option>
+                  <option value="Buy">Buy</option>
+                </select>
+              </div>
+            </>
+          )}
+          {(modalState.type === 'visitor_preapprove' || modalState.type === 'visitor_entry') && (
+            <>
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Visitor Name" onChange={e => setFormData({ ...formData, name: e.target.value })} />
+              <select className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, type: e.target.value })}>
+                <option value="Guest">Guest</option>
+                <option value="Delivery">Delivery</option>
+                <option value="Cab">Cab/Taxi</option>
+                <option value="Service">Service/Repair</option>
+              </select>
+              {modalState.type === 'visitor_entry' && (
+                <div className="flex gap-2">
+                  <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Flat No / Unit" onChange={e => setFormData({ ...formData, hostUnit: e.target.value })} />
+                  <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Purpose" onChange={e => setFormData({ ...formData, purpose: e.target.value })} />
+                </div>
+              )}
+              {modalState.type === 'visitor_preapprove' && (
+                <input type="datetime-local" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, expectedDate: e.target.value })} />
+              )}
+            </>
+          )}
 
-          <button onClick={handleSubmitModal} className="w-full bg-emerald-600 text-white py-2 rounded">Submit</button>
+          <button onClick={handleSubmitModal} className="w-full bg-emerald-600 text-white py-2 rounded hover:bg-emerald-700 transition">Submit</button>
         </div>
       </Modal>
       <ContactModal isOpen={showContact} onClose={() => setShowContact(false)} />
