@@ -73,7 +73,12 @@ import {
   PartyPopper,
   Trash2,
   Search as SearchIcon,
-  MapPin
+  MapPin,
+  QrCode,
+  Copy,
+  Upload,
+  Eye,
+  XCircle
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -726,6 +731,7 @@ export default function HumaraSocietyApp() {
   const [showCompleteProfile, setShowCompleteProfile] = useState(false);
   const [registerUnits, setRegisterUnits] = useState([]);
   const [foundSocietyName, setFoundSocietyName] = useState('');
+  const [pendingVerifications, setPendingVerifications] = useState([]);
 
   // Footer Modals State (Needed for LandingPage & inside app)
   const [showPrivacy, setShowPrivacy] = useState(false);
@@ -825,7 +831,14 @@ export default function HumaraSocietyApp() {
 
     safeSub(query(collection(db, ...path, `events_${sId}`), orderBy('date', 'asc')), setEvents);
     safeSub(query(collection(db, ...path, `complaints_${sId}`), orderBy('createdAt', 'desc')), setComplaints);
-    safeSub(query(collection(db, ...path, `bills_${sId}`), orderBy('dueDate', 'desc')), setBills);
+    safeSub(query(collection(db, ...path, `bills_${sId}`), orderBy('dueDate', 'desc')), (snapshot) => {
+      const allBills = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setBills(allBills);
+      // Filter pending verifications for admin
+      if ([ROLES.ADMIN, ROLES.TREASURER].includes(userData.role)) {
+        setPendingVerifications(allBills.filter(b => b.status === 'Pending Verification'));
+      }
+    });
     safeSub(collection(db, ...path, `amenities_${sId}`), setAmenities);
     safeSub(query(collection(db, ...path, `rentals_${sId}`), orderBy('createdAt', 'desc')), setRentals);
     safeSub(query(collection(db, ...path, `elections_${sId}`), orderBy('createdAt', 'desc')), setElections);
@@ -886,7 +899,7 @@ export default function HumaraSocietyApp() {
   };
 
   const initializeUserDocs = async (uid, formData, finalSocId, role, status) => {
-    const userPayload = { uid, email: formData.email || user.email, fullName: formData.fullName, societyId: finalSocId, unitNumber: formData.unitNumber || 'N/A', role, status, joinedAt: serverTimestamp() };
+    const userPayload = { uid, email: formData.email || user.email, fullName: formData.fullName, societyId: finalSocId, unitNumber: formData.unitNumber || 'N/A', role, status, joinedAt: serverTimestamp(), advanceBalance: 0 };
     if (authMode === 'create-society') {
       const address = {
         country: formData.country,
@@ -1035,28 +1048,8 @@ export default function HumaraSocietyApp() {
         await addDoc(collection(db, ...path, `events_${sId}`), { ...formData, createdBy: userData.fullName, createdAt: serverTimestamp() });
       } else if (modalState.type === 'complaint') {
         await addDoc(collection(db, ...path, `complaints_${sId}`), { ...formData, userId: user.uid, userName: userData.fullName, unitNumber: userData.unitNumber, status: STATUS.OPEN, createdAt: serverTimestamp() });
-      } else if (modalState.type === 'generate_monthly') {
-        if (!societyData?.maintenanceAmount) {
-          alert("Please set Maintenance Amount in Settings first.");
-          return;
-        }
-        if (!formData.dueDate) {
-          alert("Please select a Due Date.");
-          return;
-        }
-
-        const title = `Maintenance - ${new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}`;
-        const batchPromises = members.map(m => addDoc(collection(db, ...path, `bills_${sId}`), {
-          title: title,
-          amount: parseFloat(societyData.maintenanceAmount),
-          dueDate: formData.dueDate,
-          status: 'Unpaid',
-          userId: m.uid,
-          unitNumber: m.unitNumber,
-          userName: m.fullName,
-          type: 'Maintenance',
-          createdAt: serverTimestamp()
-        }));
+      } else if (modalState.type === 'maintenance') {
+        const batchPromises = members.map(m => addDoc(collection(db, ...path, `bills_${sId}`), { title: formData.title, amount: parseFloat(formData.amount), dueDate: formData.dueDate, status: 'Unpaid', userId: m.uid, unitNumber: m.unitNumber, userName: m.fullName, type: 'Maintenance' }));
         await Promise.all(batchPromises);
         alert(`Bills generated for ${members.length} members.`);
       } else if (modalState.type === 'set_maintenance') {
@@ -1069,6 +1062,20 @@ export default function HumaraSocietyApp() {
         const unitsToAdd = formData.units.split(',').map(u => u.trim()).filter(u => u);
         await updateDoc(doc(db, ...path, 'societies', sId), { units: arrayUnion(...unitsToAdd) });
         alert(`Added ${unitsToAdd.length} units.`);
+      } else if (modalState.type === 'payment_settings') {
+        await updateDoc(doc(db, ...path, 'societies', sId), {
+          bankDetails: {
+            accountName: formData.accountName,
+            accountNumber: formData.accountNumber,
+            ifsc: formData.ifsc,
+            bankName: formData.bankName
+          },
+          upiDetails: {
+            upiId: formData.upiId,
+            qrCodeUrl: 'placeholder_qr_code_url' // In a real app, this would be an uploaded image URL
+          }
+        });
+        alert("Payment settings updated!");
       } else if (modalState.type === 'expense') {
         await addDoc(collection(db, ...path, `expenses_${sId}`), { ...formData, createdBy: userData.fullName, createdAt: serverTimestamp() });
 
@@ -1128,6 +1135,54 @@ export default function HumaraSocietyApp() {
           createdAt: serverTimestamp()
         };
         await addDoc(collection(db, ...path, `visitors_${sId}`), visitorData);
+      } else if (modalState.type === 'pay_bill_online') {
+        // This handles user marking a bill as paid via Bank/UPI
+        const { billIds, method, proof } = formData;
+        const batchPromises = billIds.map(bid => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `bills_${sId}`, bid), {
+          status: 'Pending Verification',
+          paymentMode: method,
+          paymentProof: proof || 'No proof attached', // Placeholder
+          paymentDate: serverTimestamp()
+        }));
+        await Promise.all(batchPromises);
+        alert("Payment details submitted for verification.");
+      } else if (modalState.type === 'record_offline_payment') {
+        // Cashier manually recording a payment
+        const { billIds, amountPaid } = formData;
+        // For simplicity, assuming full payment for selected bills or distributing amount
+        // Here we just mark selected as Paid for demo
+        const batchPromises = billIds.map(bid => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `bills_${sId}`, bid), {
+          status: 'Paid',
+          paymentMode: 'Cash',
+          paymentDate: serverTimestamp(),
+          paidAmount: 'Full' // Simplified
+        }));
+        // Add to society funds
+        // Calculate total from bill objects if available in state, or trust input
+        // Simplified: We need bill amounts. In real app, fetch bills or pass amounts.
+        // Assuming full payment of passed bills for now.
+        await Promise.all(batchPromises);
+        alert("Payment recorded successfully.");
+      } else if (modalState.type === 'add_advance') {
+        const amount = parseFloat(formData.amount);
+        // Create a 'Bill' type transaction for record keeping but positive
+        // Or just update user profile. 
+        // For audit, better to create a 'receipt' collection, but here updating profile directly + fake bill entry for history
+        await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile'), {
+          advanceBalance: increment(amount)
+        });
+        // Optional: Add a 'Credit' entry to bills for history
+        await addDoc(collection(db, ...path, `bills_${sId}`), {
+          title: 'Advance Payment',
+          amount: amount,
+          status: 'Paid',
+          paymentMode: formData.method,
+          userId: user.uid,
+          unitNumber: userData.unitNumber,
+          type: 'Credit',
+          createdAt: serverTimestamp()
+        });
+        alert("Advance balance added!");
       }
       closeModal();
     } catch (e) { alert("Error: " + e.message); }
@@ -1140,27 +1195,21 @@ export default function HumaraSocietyApp() {
   };
 
   const handlePayBill = async (bill) => {
-    if (bill.status === 'Pending Approval') return alert("Payment is already pending approval.");
-    const confirmPayment = confirm(`Pay ₹${bill.amount}? If you have Advance Balance (₹${userData.advanceBalance || 0}), it will be used.`);
-    if (!confirmPayment) return;
-
-    const sId = userData.societyId;
-    const billRef = doc(db, 'artifacts', appId, 'public', 'data', `bills_${sId}`, bill.id);
-
-    if ((userData.advanceBalance || 0) >= bill.amount) {
-      await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile'), { advanceBalance: increment(-bill.amount) });
-      await updateDoc(billRef, { status: 'Paid', paidAt: serverTimestamp(), paymentMode: 'Advance' });
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'societies', sId), { funds: increment(bill.amount) });
-      alert("Paid from Advance Balance!");
-    } else {
-      await updateDoc(billRef, { status: 'Pending Approval', paidAt: serverTimestamp() });
-      alert("Payment marked! Admin must approve to finalize.");
-    }
+    // Legacy single bill pay - redirect to new flow
+    setModalState({ type: 'pay_bill_select', isOpen: true });
+    setFormData({ selectedBills: [bill] }); // Pre-select
   };
 
-  const handleApprovePayment = async (bill) => {
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `bills_${userData.societyId}`, bill.id), { status: 'Paid' });
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'societies', userData.societyId), { funds: increment(parseFloat(bill.amount)) });
+  const handleVerifyPayment = async (bill, action) => {
+    const sId = userData.societyId;
+    if (action === 'approve') {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `bills_${sId}`, bill.id), { status: 'Paid' });
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'societies', sId), { funds: increment(parseFloat(bill.amount)) });
+      alert("Payment Approved.");
+    } else {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `bills_${sId}`, bill.id), { status: 'Unpaid', statusMsg: 'Payment Rejected by Admin' });
+      alert("Payment Rejected.");
+    }
   };
 
   const calculateLateFees = async () => {
@@ -1290,72 +1339,98 @@ export default function HumaraSocietyApp() {
                     <h2 className="text-3xl font-bold text-emerald-600">₹{societyData?.funds || 0}</h2>
                   </div>
                   <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border dark:border-slate-700 shadow-sm">
-                    <p className="text-gray-500 text-sm">Your Advance</p>
+                    <p className="text-gray-500 text-sm">Your Advance/Points</p>
                     <h2 className="text-3xl font-bold text-blue-600">₹{userData.advanceBalance || 0}</h2>
                   </div>
                 </div>
 
                 {isAdmin && (
                   <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700">
-                    <h3 className="font-bold text-lg dark:text-white mb-3">Actions</h3>
+                    <h3 className="font-bold text-lg dark:text-white mb-3">Admin Actions</h3>
                     <div className="flex flex-wrap gap-3">
                       <button onClick={() => openModal('add_funds')} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-emerald-700 transition"><IndianRupee size={16} /> Add Funds</button>
                       <button onClick={() => openModal('expense')} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-red-700 transition"><CreditCard size={16} /> Record Expense</button>
-                      <button onClick={() => openModal('generate_monthly')} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-blue-700 transition"><FileText size={16} /> Generate Monthly Maintenance Bill</button>
+                      <button onClick={() => openModal('generate_monthly')} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-blue-700 transition"><FileText size={16} /> Generate Monthly Bill</button>
                       <button onClick={() => openModal('set_maintenance')} className="bg-gray-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-gray-700 transition"><Settings size={16} /> Settings</button>
+                      <button onClick={() => openModal('payment_settings')} className="bg-gray-800 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-gray-900 transition"><Settings size={16} /> Pay Settings</button>
                       <button onClick={calculateLateFees} className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-orange-700 transition"><Clock size={16} /> Apply Late Fees</button>
-                      <button onClick={() => openModal('recurring_expense')} className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-purple-700 transition"><Repeat size={16} /> Add Recurring</button>
                     </div>
                   </div>
                 )}
 
+                {/* Defaulters List (Visible to all) */}
+                <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 overflow-hidden">
+                  <div className="p-4 border-b dark:border-slate-700 font-bold dark:text-white flex justify-between items-center">
+                    <span>Defaulters List</span>
+                    <span className="text-xs text-red-500 font-normal">* Unpaid dues past due date</span>
+                  </div>
+                  <div className="max-h-60 overflow-y-auto p-4 space-y-2">
+                    {bills.filter(b => b.status === 'Unpaid' && b.dueDate < new Date().toISOString().split('T')[0]).map(def => (
+                      <div key={def.id} className="flex justify-between items-center text-sm border-b dark:border-slate-700 pb-2">
+                        <span className="dark:text-white font-medium">{def.userName} ({def.unitNumber})</span>
+                        <span className="text-red-500 font-bold">₹{def.amount}</span>
+                      </div>
+                    ))}
+                    {bills.filter(b => b.status === 'Unpaid' && b.dueDate < new Date().toISOString().split('T')[0]).length === 0 && (
+                      <p className="text-gray-500 text-sm text-center">No defaulters currently.</p>
+                    )}
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {/* Bills Section */}
                   <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 overflow-hidden">
-                    <div className="p-4 border-b dark:border-slate-700 font-bold dark:text-white">Recent Transactions / Bills</div>
+                    <div className="p-4 border-b dark:border-slate-700 font-bold dark:text-white flex justify-between">
+                      <span>Your Dues / Transactions</span>
+                      <button onClick={() => { setModalState({ type: 'pay_bill_select', isOpen: true }); setFormData({ selectedBills: [] }); }} className="bg-emerald-600 text-white text-xs px-3 py-1 rounded">Pay Now</button>
+                    </div>
                     <div className="max-h-96 overflow-y-auto custom-scrollbar">
-                      {bills.map(bill => (
+                      {bills.filter(b => isAdmin || b.userId === user.uid).map(bill => (
                         <div key={bill.id} className="p-4 border-b dark:border-slate-700 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-slate-700/50 transition">
                           <div>
                             <h4 className="font-bold dark:text-white">{bill.title}</h4>
                             <p className="text-sm text-gray-500">Unit: {bill.unitNumber} • {bill.userName}</p>
                             <p className="text-xs text-red-500">Due: {bill.dueDate} {bill.lateFeeApplied && "(Late Fee)"}</p>
+                            {bill.status === 'Pending Verification' && <p className="text-xs text-yellow-600">Method: {bill.paymentMode}</p>}
                           </div>
                           <div className="text-right">
                             <p className="font-bold dark:text-white">₹{bill.amount}</p>
-                            {bill.status === 'Paid' ? <Badge color="bg-green-100 text-green-800">Paid</Badge> :
-                              bill.status === 'Pending Approval' ?
-                                (isAdmin ? <button onClick={() => handleApprovePayment(bill)} className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">Approve</button> : <Badge color="bg-yellow-100 text-yellow-800">Pending</Badge>)
-                                :
-                                (bill.userId === user.uid ? <button onClick={() => handlePayBill(bill)} className="text-xs bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700">Pay</button> : <Badge color="bg-red-100 text-red-800">Unpaid</Badge>)
-                            }
+                            <Badge color={bill.status === 'Paid' ? 'bg-green-100 text-green-800' : bill.status === 'Pending Verification' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}>
+                              {bill.status}
+                            </Badge>
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  {/* Recurring Expenses Section */}
-                  <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 overflow-hidden">
-                    <div className="p-4 border-b dark:border-slate-700 font-bold dark:text-white">Recurring Expenses</div>
-                    <div className="max-h-96 overflow-y-auto custom-scrollbar p-4 space-y-3">
-                      {recurringExpenses.length === 0 ? <p className="text-gray-500 text-sm">No recurring expenses set.</p> : recurringExpenses.map(exp => (
-                        <div key={exp.id} className="flex justify-between items-center bg-gray-50 dark:bg-slate-700 p-3 rounded-lg border dark:border-slate-600">
-                          <div>
-                            <h4 className="font-bold dark:text-white">{exp.title}</h4>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">Frequency: {exp.frequency}</p>
+                  {/* Pending Verifications (Admin Only) */}
+                  {isAdmin && (
+                    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 overflow-hidden">
+                      <div className="p-4 border-b dark:border-slate-700 font-bold dark:text-white">Pending Payment Verifications</div>
+                      <div className="max-h-96 overflow-y-auto custom-scrollbar">
+                        {pendingVerifications.length === 0 ? <p className="p-4 text-sm text-gray-500">No payments pending verification.</p> : pendingVerifications.map(bill => (
+                          <div key={bill.id} className="p-4 border-b dark:border-slate-700">
+                            <div className="flex justify-between items-center mb-2">
+                              <span className="font-bold text-sm dark:text-white">{bill.userName} ({bill.unitNumber})</span>
+                              <span className="text-emerald-600 font-bold">₹{bill.amount}</span>
+                            </div>
+                            <div className="text-xs text-gray-500 mb-2">
+                              <p>Via: {bill.paymentMode}</p>
+                              <p>Date: {bill.paymentDate ? new Date(bill.paymentDate.seconds * 1000).toLocaleString() : 'N/A'}</p>
+                              {bill.paymentProof && bill.paymentProof !== 'No proof attached' && (
+                                <a href="#" className="text-blue-500 underline flex items-center gap-1"><Eye size={10} /> View Proof (Mock)</a>
+                              )}
+                            </div>
+                            <div className="flex gap-2">
+                              <button onClick={() => handleVerifyPayment(bill, 'approve')} className="flex-1 bg-green-600 text-white py-1 rounded text-xs">Receive / Approve</button>
+                              <button onClick={() => handleVerifyPayment(bill, 'reject')} className="flex-1 bg-red-600 text-white py-1 rounded text-xs">Reject</button>
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <p className="font-bold text-emerald-600">₹{exp.amount}</p>
-                            <button onClick={() => {
-                              setModalState({ type: 'expense', isOpen: true });
-                              setFormData({ title: exp.title, amount: exp.amount, deductFromSociety: true });
-                            }} className="text-xs text-blue-600 underline mt-1">Record Now</button>
-                          </div>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1640,6 +1715,134 @@ export default function HumaraSocietyApp() {
       {/* MODALS */}
       <Modal isOpen={modalState.isOpen} onClose={closeModal} title="Details">
         <div className="space-y-4">
+          {modalState.type === 'payment_settings' && (
+            <>
+              <h4 className="font-bold dark:text-white">Bank Details</h4>
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white" placeholder="Account Name" onChange={e => setFormData({ ...formData, accountName: e.target.value })} defaultValue={societyData?.bankDetails?.accountName} />
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white" placeholder="Account Number" onChange={e => setFormData({ ...formData, accountNumber: e.target.value })} defaultValue={societyData?.bankDetails?.accountNumber} />
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white" placeholder="IFSC Code" onChange={e => setFormData({ ...formData, ifsc: e.target.value })} defaultValue={societyData?.bankDetails?.ifsc} />
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white" placeholder="Bank Name" onChange={e => setFormData({ ...formData, bankName: e.target.value })} defaultValue={societyData?.bankDetails?.bankName} />
+
+              <h4 className="font-bold mt-4 dark:text-white">UPI Details</h4>
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white" placeholder="UPI ID (e.g. society@upi)" onChange={e => setFormData({ ...formData, upiId: e.target.value })} defaultValue={societyData?.upiDetails?.upiId} />
+              <p className="text-xs text-gray-500">QR Code upload will be supported in future updates.</p>
+            </>
+          )}
+          {modalState.type === 'pay_bill_select' && (
+            <>
+              <h4 className="font-bold dark:text-white mb-2">Select Dues to Pay</h4>
+              <div className="max-h-60 overflow-y-auto space-y-2 mb-4">
+                {bills.filter(b => b.userId === user.uid && b.status === 'Unpaid').map(b => (
+                  <label key={b.id} className="flex items-center gap-2 p-2 border rounded dark:border-slate-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.selectedBills?.some(sb => sb.id === b.id)}
+                      onChange={e => {
+                        const current = formData.selectedBills || [];
+                        if (e.target.checked) setFormData({ ...formData, selectedBills: [...current, b] });
+                        else setFormData({ ...formData, selectedBills: current.filter(sb => sb.id !== b.id) });
+                      }}
+                    />
+                    <div className="flex-1">
+                      <p className="text-sm font-bold dark:text-white">{b.title}</p>
+                      <p className="text-xs text-red-500">₹{b.amount} - Due: {b.dueDate}</p>
+                    </div>
+                  </label>
+                ))}
+                {bills.filter(b => b.userId === user.uid && b.status === 'Unpaid').length === 0 && <p className="text-sm text-green-600">No pending dues!</p>}
+              </div>
+
+              <h4 className="font-bold dark:text-white mb-2">Advance Payment / Credit</h4>
+              <button
+                className="w-full py-2 border-2 border-dashed border-emerald-500 text-emerald-600 rounded mb-4 hover:bg-emerald-50 dark:hover:bg-emerald-900/20"
+                onClick={() => { setModalState({ type: 'pay_mode', isOpen: true, mode: 'Advance' }); setFormData({ amount: '', isAdvance: true }); }}
+              >
+                + Add Advance Credit
+              </button>
+
+              <div className="flex justify-between items-center border-t pt-4">
+                <span className="font-bold dark:text-white">Total: ₹{(formData.selectedBills || []).reduce((sum, b) => sum + parseFloat(b.amount), 0)}</span>
+                <button
+                  disabled={!formData.selectedBills?.length}
+                  onClick={() => setModalState({ type: 'pay_mode', isOpen: true })}
+                  className="bg-emerald-600 text-white px-4 py-2 rounded disabled:opacity-50"
+                >
+                  Proceed
+                </button>
+              </div>
+            </>
+          )}
+          {modalState.type === 'pay_mode' && (
+            <div className="space-y-4">
+              <h4 className="font-bold dark:text-white text-lg">Select Payment Mode</h4>
+              <p className="text-sm text-gray-500">Amount: ₹{formData.isAdvance ? formData.amount : (formData.selectedBills || []).reduce((sum, b) => sum + parseFloat(b.amount), 0)}</p>
+
+              {formData.isAdvance && (
+                <input type="number" placeholder="Enter Advance Amount" className="w-full p-2 border rounded" onChange={e => setFormData({ ...formData, amount: e.target.value })} />
+              )}
+
+              <div className="grid grid-cols-3 gap-2">
+                {['Cash', 'Bank Transfer', 'UPI'].map(m => (
+                  <button
+                    key={m}
+                    onClick={() => setFormData({ ...formData, method: m })}
+                    className={`p-3 rounded border text-center text-sm ${formData.method === m ? 'bg-emerald-100 border-emerald-500 text-emerald-700' : 'bg-gray-50 dark:bg-slate-700 dark:border-slate-600 dark:text-white'}`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+
+              {formData.method === 'Bank Transfer' && (
+                <div className="p-3 bg-gray-100 dark:bg-slate-700 rounded text-sm space-y-1">
+                  <p><span className="font-bold">Bank:</span> {societyData?.bankDetails?.bankName || 'N/A'}</p>
+                  <p><span className="font-bold">Acct:</span> {societyData?.bankDetails?.accountNumber || 'N/A'}</p>
+                  <p><span className="font-bold">IFSC:</span> {societyData?.bankDetails?.ifsc || 'N/A'}</p>
+                  <p><span className="font-bold">Name:</span> {societyData?.bankDetails?.accountName || 'N/A'}</p>
+                </div>
+              )}
+
+              {formData.method === 'UPI' && (
+                <div className="p-3 bg-gray-100 dark:bg-slate-700 rounded text-center">
+                  <div className="bg-white p-2 w-32 h-32 mx-auto mb-2 flex items-center justify-center border">
+                    <QrCode size={64} />
+                  </div>
+                  <p className="font-mono bg-white dark:bg-slate-800 p-1 rounded text-xs select-all cursor-pointer" onClick={() => navigator.clipboard.writeText(societyData?.upiDetails?.upiId)}>
+                    {societyData?.upiDetails?.upiId || 'No UPI ID Set'} <Copy size={10} className="inline" />
+                  </p>
+                </div>
+              )}
+
+              {(formData.method === 'Bank Transfer' || formData.method === 'UPI') && (
+                <div>
+                  <label className="block text-xs font-bold mb-1 dark:text-white">Attach Proof (Screenshot)</label>
+                  <div className="border-2 border-dashed border-gray-300 rounded p-4 text-center cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-700">
+                    <Upload size={20} className="mx-auto text-gray-400" />
+                    <span className="text-xs text-gray-500">Click to upload (Simulated)</span>
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={() => {
+                  const payload = formData.isAdvance
+                    ? { type: 'add_advance' }
+                    : { type: 'pay_bill_online', billIds: formData.selectedBills.map(b => b.id), proof: 'Simulated_Screenshot.jpg' };
+
+                  if (formData.method === 'Cash') {
+                    alert("Please pay cash to the Treasurer/Admin. They will update the status.");
+                    // Optionally create a 'Cash Pending' request
+                  } else {
+                    setModalState({ ...modalState, type: payload.type });
+                    handleSubmitModal(); // Re-trigger submit with new type
+                  }
+                }}
+                className="w-full bg-emerald-600 text-white py-2 rounded"
+              >
+                Mark as Paid
+              </button>
+            </div>
+          )}
           {modalState.type === 'set_maintenance' && (
             <>
               <label className="text-sm dark:text-white">Monthly Maintenance Amount (₹)</label>
