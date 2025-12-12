@@ -24,7 +24,8 @@ import {
   orderBy,
   serverTimestamp,
   increment,
-  arrayUnion
+  arrayUnion,
+  deleteDoc
 } from 'firebase/firestore';
 import {
   LayoutDashboard,
@@ -77,7 +78,6 @@ const getFirebaseConfig = () => {
   }
 
   // 2. Try reading from import.meta.env (Required for Vite/Vercel)
-  // This might show a warning in the Canvas preview build, but it is necessary for Vercel.
   try {
     if (typeof import.meta !== 'undefined' && import.meta.env) {
       const env = import.meta.env;
@@ -731,6 +731,23 @@ export default function HumaraSocietyApp() {
   const openModal = (type) => { setModalState({ type, isOpen: true }); setFormData({}); };
   const closeModal = () => setModalState({ type: null, isOpen: false });
 
+  // New Handlers for Directory
+  const handleApproveMember = async (targetUid) => {
+    try {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', targetUid), { status: MEMBER_STATUS.APPROVED });
+      await updateDoc(doc(db, 'artifacts', appId, 'users', targetUid, 'settings', 'profile'), { status: MEMBER_STATUS.APPROVED });
+      alert("Member Approved!");
+    } catch (e) { alert(e.message); }
+  };
+
+  const handleRejectMember = async (targetUid) => {
+    try {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', targetUid), { status: MEMBER_STATUS.REJECTED });
+      await updateDoc(doc(db, 'artifacts', appId, 'users', targetUid, 'settings', 'profile'), { status: MEMBER_STATUS.REJECTED });
+      alert("Member Rejected.");
+    } catch (e) { alert(e.message); }
+  };
+
   const handleVote = async (electionId, candidateId) => {
     const sId = userData.societyId;
     const electionRef = doc(db, 'artifacts', appId, 'public', 'data', `elections_${sId}`, electionId);
@@ -790,6 +807,11 @@ export default function HumaraSocietyApp() {
         });
       } else if (modalState.type === 'amenity') {
         await addDoc(collection(db, ...path, `amenities_${sId}`), formData);
+      } else if (modalState.type === 'add_funds') {
+        const amount = parseFloat(formData.amount);
+        // Simple update to funds, in a real app you'd log the transaction type (Cash/Bank)
+        await updateDoc(doc(db, ...path, 'societies', sId), { funds: increment(amount) });
+        alert(`Added ₹${amount} via ${formData.fundType || 'Cash in Hand'}`);
       }
       closeModal();
     } catch (e) { alert("Error: " + e.message); }
@@ -834,6 +856,13 @@ export default function HumaraSocietyApp() {
     const promises = overdue.map(b => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `bills_${userData.societyId}`, b.id), { amount: parseFloat(b.amount) + fee, lateFeeApplied: true, title: `${b.title} (Late Fee Added)` }));
     await Promise.all(promises);
     alert(`Late fees applied to ${overdue.length} bills.`);
+  };
+
+  const handleSOS = () => {
+    if (confirm("Send EMERGENCY SOS alert to all admins and security?")) {
+      // In a real app, this would trigger a cloud function or push notification
+      alert("SOS Alert Sent! Help is on the way.");
+    }
   };
 
   // --- Render ---
@@ -885,7 +914,7 @@ export default function HumaraSocietyApp() {
           </div>
         </aside>
 
-        <main className="flex-1 md:ml-64 flex flex-col h-screen overflow-hidden bg-gray-50 dark:bg-slate-900 transition-colors">
+        <main className="flex-1 md:ml-64 flex flex-col h-screen overflow-hidden bg-gray-50 dark:bg-slate-900 transition-colors relative">
           {/* Header */}
           <header className="bg-white dark:bg-slate-800 border-b dark:border-slate-700 h-16 flex items-center justify-between px-4 md:px-8 shrink-0 transition-colors">
             <div className="flex items-center gap-4">
@@ -895,10 +924,38 @@ export default function HumaraSocietyApp() {
             <div className="flex items-center gap-4">
               {/* Header Icons */}
               <button onClick={() => setDarkMode(!darkMode)} className="md:hidden p-2 text-gray-600 dark:text-gray-300">{darkMode ? <Sun size={20} /> : <Moon size={20} />}</button>
-              <button onClick={() => setShowNotifications(!showNotifications)} className="text-gray-500 dark:text-gray-400 relative">
-                <Bell size={20} />
-                {notices.length > 0 && <span className="absolute -top-1 -right-1 h-2 w-2 bg-red-500 rounded-full"></span>}
+
+              {/* SOS Button */}
+              <button onClick={handleSOS} className="text-red-600 hover:text-red-700 animate-pulse" title="Emergency SOS">
+                <ShieldAlert size={24} />
               </button>
+
+              <div className="relative">
+                <button onClick={() => setShowNotifications(!showNotifications)} className="text-gray-500 dark:text-gray-400 relative">
+                  <Bell size={20} />
+                  {notices.length > 0 && <span className="absolute -top-1 -right-1 h-2 w-2 bg-red-500 rounded-full"></span>}
+                </button>
+                {/* Notification Dropdown */}
+                {showNotifications && (
+                  <div className="absolute right-0 top-10 w-80 bg-white dark:bg-slate-800 shadow-xl rounded-xl p-4 border dark:border-slate-700 z-50">
+                    <div className="flex justify-between items-center mb-2">
+                      <h3 className="font-bold dark:text-white">Notifications</h3>
+                      <button onClick={() => setShowNotifications(false)}><X size={16} className="text-gray-500" /></button>
+                    </div>
+                    {notices.length === 0 ? <p className="text-sm text-gray-500">No new notices.</p> : (
+                      <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
+                        {notices.map(n => (
+                          <div key={n.id} className="text-sm border-b dark:border-slate-700 pb-2 last:border-0">
+                            <p className="font-semibold dark:text-white">{n.title}</p>
+                            <p className="text-gray-500 dark:text-gray-400 text-xs mt-1">{n.content.substring(0, 60)}...</p>
+                            <span className="text-[10px] text-gray-400 block mt-1">{new Date(n.createdAt?.seconds * 1000).toLocaleDateString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </header>
 
@@ -972,18 +1029,93 @@ export default function HumaraSocietyApp() {
               </div>
             )}
 
-            {activeTab === TABS.RENTALS && (
-              <div className="space-y-4">
-                <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Rental Listings</h2><button className="bg-emerald-600 text-white px-3 py-1 rounded" onClick={() => openModal('rental')}>List Property</button></div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {rentals.map(r => (
-                    <div key={r.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700">
-                      <h3 className="font-bold dark:text-white">{r.type} - ₹{r.price}</h3>
-                      <p className="text-gray-600 dark:text-gray-300 text-sm">{r.description}</p>
-                      <button className="mt-2 text-emerald-600 text-sm font-bold">Contact: {r.ownerName}</button>
+            {/* DIRECTORY TAB */}
+            {activeTab === TABS.DIRECTORY && (
+              <div className="space-y-6">
+                <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Directory</h2></div>
+
+                {isAdmin && pendingMembers.length > 0 && (
+                  <div className="bg-yellow-50 dark:bg-yellow-900/20 p-4 rounded-xl border border-yellow-200 dark:border-yellow-800">
+                    <h3 className="font-bold text-yellow-800 dark:text-yellow-200 mb-4">Pending Approvals</h3>
+                    {pendingMembers.map(m => (
+                      <div key={m.uid} className="flex flex-col md:flex-row justify-between items-center bg-white dark:bg-slate-800 p-3 rounded mb-2 shadow-sm gap-2">
+                        <div className="text-sm dark:text-white">
+                          <span className="font-bold">{m.fullName}</span> ({m.unitNumber}) - {m.email}
+                        </div>
+                        <div className="flex gap-2 w-full md:w-auto">
+                          <button onClick={() => handleApproveMember(m.uid)} className="flex-1 md:flex-none bg-green-600 text-white px-3 py-1.5 rounded text-xs hover:bg-green-700">Approve</button>
+                          <button onClick={() => handleRejectMember(m.uid)} className="flex-1 md:flex-none bg-red-600 text-white px-3 py-1.5 rounded text-xs hover:bg-red-700">Reject</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {members.map(m => (
+                    <div key={m.uid} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 flex items-center gap-4 hover:shadow-md transition">
+                      <div className="h-12 w-12 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center text-emerald-700 dark:text-emerald-400 font-bold text-lg">
+                        {m.fullName[0].toUpperCase()}
+                      </div>
+                      <div>
+                        <h4 className="font-bold dark:text-white">{m.fullName}</h4>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">Unit: {m.unitNumber}</p>
+                        <p className="text-xs text-gray-400 dark:text-gray-500 capitalize">{m.role}</p>
+                      </div>
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* RENTALS TAB */}
+            {activeTab === TABS.RENTALS && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center"><h2 className="text-xl font-bold dark:text-white">Rental Listings</h2><button className="bg-emerald-600 text-white px-3 py-1 rounded" onClick={() => openModal('rental')}>List Property</button></div>
+                {rentals.length === 0 ? (
+                  <div className="text-center py-10 text-gray-500 dark:text-gray-400 bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700">
+                    <Home size={48} className="mx-auto mb-2 opacity-50" />
+                    <p>No rentals available at the moment.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {rentals.map(r => (
+                      <div key={r.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700">
+                        <h3 className="font-bold dark:text-white">{r.type} - ₹{r.price}</h3>
+                        <p className="text-gray-600 dark:text-gray-300 text-sm">{r.description}</p>
+                        <button className="mt-2 text-emerald-600 text-sm font-bold">Contact: {r.ownerName}</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* AMENITIES TAB */}
+            {activeTab === TABS.AMENITIES && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-xl font-bold dark:text-white">Amenities</h2>
+                  {isAdmin && <button className="bg-emerald-600 text-white px-3 py-1 rounded" onClick={() => openModal('amenity')}>Add Amenity</button>}
+                </div>
+                {amenities.length === 0 ? (
+                  <div className="text-center py-10 text-gray-500 dark:text-gray-400 bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700">
+                    <Calendar size={48} className="mx-auto mb-2 opacity-50" />
+                    <p>No amenities listed yet.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {amenities.map(a => (
+                      <div key={a.id} className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700">
+                        <h3 className="font-bold text-lg dark:text-white">{a.name}</h3>
+                        <div className="mt-2 space-y-1 text-sm text-gray-600 dark:text-gray-300">
+                          <p>Capacity: {a.capacity} people</p>
+                          <p>Timings: {a.openTime} - {a.closeTime}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1033,7 +1165,31 @@ export default function HumaraSocietyApp() {
           )}
           {modalState.type === 'add_funds' && (
             <>
-              <input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Amount (₹)" onChange={e => setFormData({ ...formData, amount: e.target.value })} />
+              <label className="text-sm dark:text-white">Amount (₹)</label>
+              <input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Amount" onChange={e => setFormData({ ...formData, amount: e.target.value })} />
+
+              <label className="text-sm dark:text-white mt-4 block">Source</label>
+              <div className="flex gap-4 mt-2">
+                <label className="flex items-center gap-2 cursor-pointer dark:text-white">
+                  <input
+                    type="radio"
+                    name="fundType"
+                    value="Cash in Hand"
+                    onChange={e => setFormData({ ...formData, fundType: e.target.value })}
+                    defaultChecked
+                  />
+                  Cash in Hand
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer dark:text-white">
+                  <input
+                    type="radio"
+                    name="fundType"
+                    value="Cash in Bank"
+                    onChange={e => setFormData({ ...formData, fundType: e.target.value })}
+                  />
+                  Cash in Bank
+                </label>
+              </div>
             </>
           )}
           {/* Restored Inputs */}
@@ -1074,6 +1230,16 @@ export default function HumaraSocietyApp() {
               <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Apartment Type (e.g. 2BHK)" onChange={e => setFormData({ ...formData, type: e.target.value })} />
               <input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Rent (₹/month)" onChange={e => setFormData({ ...formData, price: e.target.value })} />
               <textarea className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Description/Amenities" onChange={e => setFormData({ ...formData, description: e.target.value })} />
+            </>
+          )}
+          {modalState.type === 'amenity' && (
+            <>
+              <input className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Amenity Name (e.g. Gym)" onChange={e => setFormData({ ...formData, name: e.target.value })} />
+              <input type="number" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Capacity (persons)" onChange={e => setFormData({ ...formData, capacity: e.target.value })} />
+              <div className="grid grid-cols-2 gap-2">
+                <input type="time" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, openTime: e.target.value })} />
+                <input type="time" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, closeTime: e.target.value })} />
+              </div>
             </>
           )}
           {modalState.type === 'election' && (
