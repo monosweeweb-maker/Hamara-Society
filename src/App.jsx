@@ -1037,8 +1037,10 @@ export default function HumaraSocietyApp() {
         await addDoc(collection(db, ...path, `visitors_${sId}`), visitorData);
       } else if (type === 'pay_bill_online') {
         // FIX: Ensure this block runs when called directly
-        const { billIds, method, proof } = formData;
-        const batchPromises = billIds.map(bid => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `bills_${sId}`, bid), { status: 'Pending Verification', paymentMode: method, paymentProof: proof || 'No proof attached', paymentDate: serverTimestamp() }));
+        const { selectedBills, method, proof } = formData;
+        const ids = formData.billIds || selectedBills?.map(b => b.id);
+        if (!ids || ids.length === 0) return;
+        const batchPromises = ids.map(bid => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `bills_${sId}`, bid), { status: 'Pending Verification', paymentMode: method, paymentProof: proof || 'No proof attached', paymentDate: serverTimestamp() }));
         await Promise.all(batchPromises);
         alert("Payment details submitted for verification.");
       } else if (type === 'add_advance') {
@@ -1256,9 +1258,28 @@ export default function HumaraSocietyApp() {
                           </div>
                           <div className="text-right">
                             <p className="font-bold dark:text-white">₹{bill.amount}</p>
-                            <Badge color={bill.status === 'Paid' ? 'bg-green-100 text-green-800' : bill.status === 'Pending Verification' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}>
-                              {bill.status}
-                            </Badge>
+                            {bill.status === 'Paid' ? (
+                              <Badge color="bg-green-100 text-green-800">Paid</Badge>
+                            ) : bill.status === 'Pending Verification' ? (
+                              isAdmin ? (
+                                <button onClick={() => handleVerifyPayment(bill, 'approve')} className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">Approve</button>
+                              ) : (
+                                <Badge color="bg-yellow-100 text-yellow-800">Pending</Badge>
+                              )
+                            ) : (
+                              // Status is 'Unpaid'
+                              <>
+                                {bill.userId === user.uid && (
+                                  <button onClick={() => handlePayBill(bill)} className="text-xs bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700">Pay</button>
+                                )}
+                                {isAdmin && bill.userId !== user.uid && (
+                                  <button onClick={() => handleVerifyPayment(bill, 'approve')} className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 ml-2">Mark Paid</button>
+                                )}
+                                {!isAdmin && bill.userId !== user.uid && (
+                                  <Badge color="bg-red-100 text-red-800">Unpaid</Badge>
+                                )}
+                              </>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -1684,6 +1705,7 @@ export default function HumaraSocietyApp() {
 
                     if (formData.method === 'Cash') {
                       alert("Please pay cash to the Treasurer/Admin. They will update the status.");
+                      handleSubmitModal(payload.type); // Submit as pending
                     } else {
                       handleSubmitModal(payload.type);
                     }
