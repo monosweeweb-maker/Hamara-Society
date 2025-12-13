@@ -8,7 +8,8 @@ import {
   signOut,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  sendEmailVerification
+  sendEmailVerification,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import {
   getFirestore,
@@ -27,7 +28,8 @@ import {
   increment,
   arrayUnion,
   arrayRemove,
-  deleteDoc
+  deleteDoc,
+  writeBatch
 } from 'firebase/firestore';
 import {
   LayoutDashboard,
@@ -466,7 +468,7 @@ const LandingPage = ({ onAuthClick, setAuthMode }) => {
   );
 };
 
-const AuthModal = ({ show, onClose, mode, setMode, formData, setFormData, onSubmit, loading, error, onCheckSocietyCode, onSearchSociety, availableUnits, foundSocietyName }) => {
+const AuthModal = ({ show, onClose, mode, setMode, formData, setFormData, onSubmit, loading, error, onCheckSocietyCode, onSearchSociety, availableUnits, foundSocietyName, onForgotPassword }) => {
   if (!show) return null;
   const countries = Object.keys(LOCATION_DATA);
   const states = formData.country ? Object.keys(LOCATION_DATA[formData.country] || {}) : [];
@@ -516,6 +518,12 @@ const AuthModal = ({ show, onClose, mode, setMode, formData, setFormData, onSubm
         )}
         <input className="w-full p-2.5 border rounded-lg dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Email Address" value={formData.email || ''} onChange={e => setFormData({ ...formData, email: e.target.value })} />
         <input type="password" className="w-full p-2.5 border rounded-lg dark:bg-slate-700 dark:text-white dark:border-slate-600" placeholder="Password" value={formData.password || ''} onChange={e => setFormData({ ...formData, password: e.target.value })} />
+
+        {mode === 'login' && (
+          <div className="flex justify-end -mt-2 mb-2">
+            <button onClick={onForgotPassword} className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline">Forgot Password?</button>
+          </div>
+        )}
 
         {mode === 'create-society' && (
           <>
@@ -781,6 +789,23 @@ export default function HumaraSocietyApp() {
         fetchUnitsForSociety(data.id);
       } else { alert("No society found with that exact name."); }
     } catch (e) { console.error("Search failed", e); }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!authForm.email) {
+      setAuthError("Please enter your email to reset password.");
+      return;
+    }
+    setLoading(true);
+    try {
+      await sendPasswordResetEmail(auth, authForm.email);
+      alert("Password reset link sent to your email!");
+      setAuthError("");
+    } catch (e) {
+      setAuthError(e.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const initializeUserDocs = async (uid, formData, finalSocId, role, status) => {
@@ -1151,7 +1176,7 @@ export default function HumaraSocietyApp() {
 
   // --- Render ---
   if (!authChecked) return null;
-  if (!user) return <AppWrapper darkMode={darkMode}><LandingPage onAuthClick={() => setShowAuthModal(true)} setAuthMode={setAuthMode} /><AuthModal show={showAuthModal} onClose={() => setShowAuthModal(false)} mode={authMode} setMode={setAuthMode} formData={authForm} setFormData={setAuthForm} onSubmit={handleAuthSubmit} loading={loading} error={authError} onCheckSocietyCode={fetchUnitsForSociety} onSearchSociety={handleSearchSociety} availableUnits={registerUnits} foundSocietyName={foundSocietyName} /></AppWrapper>;
+  if (!user) return <AppWrapper darkMode={darkMode}><LandingPage onAuthClick={() => setShowAuthModal(true)} setAuthMode={setAuthMode} /><AuthModal show={showAuthModal} onClose={() => setShowAuthModal(false)} mode={authMode} setMode={setAuthMode} formData={authForm} setFormData={setAuthForm} onSubmit={handleAuthSubmit} loading={loading} error={authError} onCheckSocietyCode={fetchUnitsForSociety} onSearchSociety={handleSearchSociety} availableUnits={registerUnits} foundSocietyName={foundSocietyName} onForgotPassword={handleForgotPassword} /></AppWrapper>;
   if (!userData) return <AppWrapper darkMode={darkMode}><div className="flex justify-center items-center h-screen">Loading Profile...</div></AppWrapper>;
   if (userData.status !== MEMBER_STATUS.APPROVED) return <AppWrapper darkMode={darkMode}><div className="flex justify-center items-center h-screen">Status: {userData.status} <button onClick={() => signOut(auth)} className="ml-4 underline">Sign Out</button></div></AppWrapper>;
 
