@@ -965,17 +965,36 @@ export default function HumaraSocietyApp() {
 
         const title = `Maintenance - ${new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}`;
         // FIX: Ensure batch promises are created correctly
-        const batchPromises = members.map(m => addDoc(collection(db, ...path, `bills_${sId}`), {
-          title: title,
-          amount: amt,
-          dueDate: formData.dueDate,
-          status: 'Unpaid',
-          userId: m.uid,
-          unitNumber: m.unitNumber,
-          userName: m.fullName,
-          type: 'Maintenance',
-          createdAt: serverTimestamp()
-        }));
+        const batchPromises = members.map(async (m) => {
+          let isPaid = false;
+          let currentAdv = m.advanceBalance || 0;
+
+          if (formData.autoDeduct && currentAdv >= amt) {
+            isPaid = true;
+            // Deduct from User Balance
+            await updateDoc(doc(db, 'artifacts', appId, 'users', m.uid, 'settings', 'profile'), { advanceBalance: increment(-amt) });
+            // Also update public profile copy if needed, though for now we rely on the user doc
+            // In a real app, keeping these in sync is critical. Here we assume user doc is source of truth.
+
+            // Add to Society Funds (Revenue Realized)
+            await updateDoc(doc(db, ...path, 'societies', sId), { funds: increment(amt) });
+          }
+
+          return addDoc(collection(db, ...path, `bills_${sId}`), {
+            title: title,
+            amount: amt,
+            dueDate: formData.dueDate,
+            status: isPaid ? 'Paid' : 'Unpaid',
+            userId: m.uid,
+            unitNumber: m.unitNumber,
+            userName: m.fullName,
+            type: 'Maintenance',
+            paymentMode: isPaid ? 'Advance Deduction' : null,
+            paidAt: isPaid ? serverTimestamp() : null,
+            createdAt: serverTimestamp()
+          });
+        });
+
         await Promise.all(batchPromises);
         alert(`Bills successfully generated for ${members.length} members.`);
       } else if (type === 'set_maintenance') {
@@ -1037,17 +1056,47 @@ export default function HumaraSocietyApp() {
         await addDoc(collection(db, ...path, `visitors_${sId}`), visitorData);
       } else if (type === 'pay_bill_online') {
         // FIX: Ensure this block runs when called directly
-        const { selectedBills, method, proof } = formData;
-        const ids = formData.billIds || selectedBills?.map(b => b.id);
-        if (!ids || ids.length === 0) return;
-        const batchPromises = ids.map(bid => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `bills_${sId}`, bid), { status: 'Pending Verification', paymentMode: method, paymentProof: proof || 'No proof attached', paymentDate: serverTimestamp() }));
+        const { billIds, method, proof } = formData;
+
+        // Set status to 'Pending Verification' regardless of method. Even cash needs verification if user clicks 'Paid'
+        const status = 'Pending Verification';
+
+        const batchPromises = billIds.map(bid => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `bills_${sId}`, bid), {
+          status: status,
+          paymentMode: method,
+          paymentProof: proof || 'No proof attached',
+          paymentDate: serverTimestamp()
+        }));
         await Promise.all(batchPromises);
         alert("Payment details submitted for verification.");
       } else if (type === 'add_advance') {
         const amount = parseFloat(formData.amount);
-        await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile'), { advanceBalance: increment(amount) });
-        await addDoc(collection(db, ...path, `bills_${sId}`), { title: 'Advance Payment', amount: amount, status: 'Paid', paymentMode: formData.method, userId: user.uid, unitNumber: userData.unitNumber, type: 'Credit', createdAt: serverTimestamp() });
-        alert("Advance balance added!");
+        await addDoc(collection(db, ...path, `bills_${sId}`), { title: 'Advance Payment Request', amount: amount, status: 'Pending Verification', paymentMode: formData.method, userId: user.uid, unitNumber: userData.unitNumber, type: 'Advance Credit', createdAt: serverTimestamp() });
+        alert("Advance credit request submitted for approval.");
+      } else if (type === 'admin_manual_pay') {
+        // Manual Pay Logic for Admin
+        const { bill, source } = formData;
+        if (source === 'advance') {
+          // Fetch user to check balance - risky if stale, but okay for prototype
+          const userRef = doc(db, 'artifacts', appId, 'users', bill.userId, 'settings', 'profile');
+          const userSnap = await getDoc(userRef);
+          const currentBal = userSnap.data()?.advanceBalance || 0;
+
+          if (currentBal >= bill.amount) {
+            await updateDoc(userRef, { advanceBalance: increment(-bill.amount) });
+            await updateDoc(doc(db, ...path, `bills_${sId}`, bill.id), { status: 'Paid', paymentMode: 'Advance (Admin)' });
+            await updateDoc(doc(db, ...path, 'societies', sId), { funds: increment(bill.amount) }); // Revenue realized
+            alert("Paid from Advance.");
+          } else {
+            alert("Insufficient advance balance.");
+            return;
+          }
+        } else {
+          // Cash
+          await updateDoc(doc(db, ...path, `bills_${sId}`, bill.id), { status: 'Paid', paymentMode: 'Cash (Admin)' });
+          await updateDoc(doc(db, ...path, 'societies', sId), { funds: increment(bill.amount) });
+          alert("Marked as Paid via Cash.");
+        }
       }
       closeModal();
     } catch (e) { alert("Error: " + e.message); }
@@ -1066,12 +1115,23 @@ export default function HumaraSocietyApp() {
 
   const handleVerifyPayment = async (bill, action) => {
     const sId = userData.societyId;
+    const billRef = doc(db, 'artifacts', appId, 'public', 'data', `bills_${sId}`, bill.id);
+
     if (action === 'approve') {
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `bills_${sId}`, bill.id), { status: 'Paid' });
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'societies', sId), { funds: increment(parseFloat(bill.amount)) });
-      alert("Payment Approved.");
+      if (bill.type === 'Advance Credit') {
+        // It's an advance request -> Add to User Balance + Society Funds (Cash in hand)
+        await updateDoc(doc(db, 'artifacts', appId, 'users', bill.userId, 'settings', 'profile'), { advanceBalance: increment(bill.amount) });
+        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'societies', sId), { funds: increment(bill.amount) });
+        await updateDoc(billRef, { status: 'Paid', approvedBy: userData.fullName });
+        alert("Advance Credit Approved.");
+      } else {
+        // Normal Bill Payment -> Add to Society Funds
+        await updateDoc(billRef, { status: 'Paid', approvedBy: userData.fullName });
+        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'societies', sId), { funds: increment(parseFloat(bill.amount)) });
+        alert("Payment Approved.");
+      }
     } else {
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `bills_${sId}`, bill.id), { status: 'Unpaid', statusMsg: 'Payment Rejected by Admin' });
+      await updateDoc(billRef, { status: 'Rejected', statusMsg: 'Payment Rejected by Admin' });
       alert("Payment Rejected.");
     }
   };
@@ -1258,28 +1318,9 @@ export default function HumaraSocietyApp() {
                           </div>
                           <div className="text-right">
                             <p className="font-bold dark:text-white">₹{bill.amount}</p>
-                            {bill.status === 'Paid' ? (
-                              <Badge color="bg-green-100 text-green-800">Paid</Badge>
-                            ) : bill.status === 'Pending Verification' ? (
-                              isAdmin ? (
-                                <button onClick={() => handleVerifyPayment(bill, 'approve')} className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">Approve</button>
-                              ) : (
-                                <Badge color="bg-yellow-100 text-yellow-800">Pending</Badge>
-                              )
-                            ) : (
-                              // Status is 'Unpaid'
-                              <>
-                                {bill.userId === user.uid && (
-                                  <button onClick={() => handlePayBill(bill)} className="text-xs bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700">Pay</button>
-                                )}
-                                {isAdmin && bill.userId !== user.uid && (
-                                  <button onClick={() => handleVerifyPayment(bill, 'approve')} className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 ml-2">Mark Paid</button>
-                                )}
-                                {!isAdmin && bill.userId !== user.uid && (
-                                  <Badge color="bg-red-100 text-red-800">Unpaid</Badge>
-                                )}
-                              </>
-                            )}
+                            <Badge color={bill.status === 'Paid' ? 'bg-green-100 text-green-800' : bill.status === 'Pending Verification' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}>
+                              {bill.status}
+                            </Badge>
                           </div>
                         </div>
                       ))}
@@ -1705,7 +1746,8 @@ export default function HumaraSocietyApp() {
 
                     if (formData.method === 'Cash') {
                       alert("Please pay cash to the Treasurer/Admin. They will update the status.");
-                      handleSubmitModal(payload.type); // Submit as pending
+                      // Submit payment request for admin to verify
+                      handleSubmitModal(payload.type);
                     } else {
                       handleSubmitModal(payload.type);
                     }
@@ -1715,6 +1757,27 @@ export default function HumaraSocietyApp() {
                   Submit Payment Details
                 </button>
               )}
+            </div>
+          )}
+          {modalState.type === 'admin_manual_pay' && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-500">
+                Manually update status for: <span className="font-bold">{modalState.bill.title}</span> (₹{modalState.bill.amount})
+              </p>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => { setFormData({ ...formData, source: 'cash' }); handleSubmitModal('admin_manual_pay'); }}
+                  className="bg-green-600 text-white p-2 rounded hover:bg-green-700"
+                >
+                  Cash Received
+                </button>
+                <button
+                  onClick={() => { setFormData({ ...formData, source: 'advance' }); handleSubmitModal('admin_manual_pay'); }}
+                  className="bg-blue-600 text-white p-2 rounded hover:bg-blue-700"
+                >
+                  Deduct from Advance Balance
+                </button>
+              </div>
             </div>
           )}
           {modalState.type === 'set_maintenance' && (
@@ -1730,6 +1793,19 @@ export default function HumaraSocietyApp() {
               <p className="text-sm text-gray-500">Generating bills for {members.length} members.</p>
               <label className="text-sm dark:text-white">Due Date</label>
               <input type="date" className="w-full p-2 border rounded dark:bg-slate-700 dark:text-white dark:border-slate-600" onChange={e => setFormData({ ...formData, dueDate: e.target.value })} />
+
+              <div className="flex items-center gap-2 mt-4 p-3 bg-gray-50 dark:bg-slate-700 rounded border border-gray-200 dark:border-slate-600">
+                <input
+                  type="checkbox"
+                  id="autoDeduct"
+                  checked={formData.autoDeduct || false}
+                  onChange={(e) => setFormData({ ...formData, autoDeduct: e.target.checked })}
+                  className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500"
+                />
+                <label htmlFor="autoDeduct" className="text-sm font-medium dark:text-white cursor-pointer">
+                  Auto-deduct from Advance Balance if available
+                </label>
+              </div>
             </>
           )}
           {modalState.type === 'add_funds' && (
@@ -1926,7 +2002,10 @@ export default function HumaraSocietyApp() {
                         <span className="font-bold text-sm dark:text-white">{bill.userName} ({bill.unitNumber})</span>
                         <span className="text-emerald-600 font-bold">₹{bill.amount}</span>
                       </div>
-                      <p className="text-xs text-gray-500 mb-1">Via: {bill.paymentMode}</p>
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-gray-500 mb-1">Via: {bill.paymentMode} {bill.type === 'Advance Credit' ? '(Advance Request)' : ''}</p>
+                        <Badge color="bg-yellow-100 text-yellow-800">{bill.type || 'Bill'}</Badge>
+                      </div>
                       <p className="text-xs text-gray-500 mb-3">Date: {bill.paymentDate ? new Date(bill.paymentDate.seconds * 1000).toLocaleString() : 'N/A'}</p>
                       <div className="flex gap-2 mt-3">
                         <button onClick={() => handleVerifyPayment(bill, 'approve')} className="flex-1 bg-green-600 text-white py-1.5 rounded text-sm hover:bg-green-700">Approve / Receive</button>
@@ -1940,7 +2019,7 @@ export default function HumaraSocietyApp() {
             </div>
           )}
 
-          {modalState.type !== 'receive_bills' && modalState.type !== 'pay_mode' && (
+          {modalState.type !== 'receive_bills' && modalState.type !== 'pay_mode' && modalState.type !== 'admin_manual_pay' && (
             <button onClick={() => handleSubmitModal()} className="w-full bg-emerald-600 text-white py-2 rounded hover:bg-emerald-700 transition">Submit</button>
           )}
         </div>
