@@ -938,22 +938,26 @@ export default function HumaraSocietyApp() {
     }
   };
 
-  const handleSubmitModal = async () => {
+  const handleSubmitModal = async (actionType = null) => {
     const sId = userData.societyId;
     const path = ['artifacts', appId, 'public', 'data'];
+    const type = actionType || modalState.type; // Use override if provided
+
     try {
-      if (modalState.type === 'notice') {
+      if (type === 'notice') {
         await addDoc(collection(db, ...path, `notices_${sId}`), { ...formData, postedBy: userData.fullName, role: userData.role, createdAt: serverTimestamp(), type: formData.type || 'General' });
-      } else if (modalState.type === 'event') {
+      } else if (type === 'event') {
         await addDoc(collection(db, ...path, `events_${sId}`), { ...formData, createdBy: userData.fullName, createdAt: serverTimestamp() });
-      } else if (modalState.type === 'complaint') {
+      } else if (type === 'complaint') {
         await addDoc(collection(db, ...path, `complaints_${sId}`), { ...formData, userId: user.uid, userName: userData.fullName, unitNumber: userData.unitNumber, status: STATUS.OPEN, createdAt: serverTimestamp(), replies: [] });
-      } else if (modalState.type === 'generate_monthly') {
+      } else if (type === 'generate_monthly') {
         if (!societyData?.maintenanceAmount) { alert("Please set Maintenance Amount in Settings first."); return; }
         if (!formData.dueDate) { alert("Please select a Due Date."); return; }
-        if (!members || members.length === 0) { alert("No members found to generate bills for."); return; }
+        // CHECK: Ensure members exist
+        if (!members || members.length === 0) { alert("No active members found to generate bills for."); return; }
 
         const title = `Maintenance - ${new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}`;
+        // FIX: Ensure batch promises are created correctly
         const batchPromises = members.map(m => addDoc(collection(db, ...path, `bills_${sId}`), {
           title: title,
           amount: parseFloat(societyData.maintenanceAmount),
@@ -966,21 +970,21 @@ export default function HumaraSocietyApp() {
           createdAt: serverTimestamp()
         }));
         await Promise.all(batchPromises);
-        alert(`Bills generated for ${members.length} members.`);
-      } else if (modalState.type === 'set_maintenance') {
+        alert(`Bills successfully generated for ${members.length} members.`);
+      } else if (type === 'set_maintenance') {
         await updateDoc(doc(db, ...path, 'societies', sId), { maintenanceAmount: parseFloat(formData.amount), lateFee: parseFloat(formData.lateFee) });
         alert("Maintenance settings updated!");
-      } else if (modalState.type === 'add_unit') {
+      } else if (type === 'add_unit') {
         const unitsToAdd = formData.units.split(',').map(u => u.trim()).filter(u => u);
         await updateDoc(doc(db, ...path, 'societies', sId), { units: arrayUnion(...unitsToAdd) });
         alert(`Added ${unitsToAdd.length} units.`);
-      } else if (modalState.type === 'payment_settings') {
+      } else if (type === 'payment_settings') {
         await updateDoc(doc(db, ...path, 'societies', sId), {
           bankDetails: { accountName: formData.accountName, accountNumber: formData.accountNumber, ifsc: formData.ifsc, bankName: formData.bankName },
           upiDetails: { upiId: formData.upiId, qrCodeUrl: 'placeholder_qr_code_url' }
         });
         alert("Payment settings updated!");
-      } else if (modalState.type === 'expense') {
+      } else if (type === 'expense') {
         const finalType = formData.type === 'Other' ? formData.customType : formData.type;
         const expenseData = { ...formData, type: finalType, createdBy: userData.fullName, createdAt: serverTimestamp() };
         await addDoc(collection(db, ...path, `expenses_${sId}`), expenseData);
@@ -1005,31 +1009,32 @@ export default function HumaraSocietyApp() {
           const batchPromises = members.map(m => addDoc(collection(db, ...path, `bills_${sId}`), { title: `Split: ${formData.title}`, amount: perPerson.toFixed(2), dueDate: new Date().toISOString().split('T')[0], status: 'Unpaid', userId: m.uid, unitNumber: m.unitNumber, userName: m.fullName, type: 'Shared Expense' }));
           await Promise.all(batchPromises);
         }
-      } else if (modalState.type === 'rental') {
+      } else if (type === 'rental') {
         await addDoc(collection(db, ...path, `rentals_${sId}`), { ...formData, ownerId: user.uid, ownerName: userData.fullName, contact: userData.email, createdAt: serverTimestamp() });
-      } else if (modalState.type === 'election') {
+      } else if (type === 'election') {
         const candidates = formData.candidatesString.split(',').map((name, idx) => ({ id: idx, name: name.trim(), votes: 0 }));
         await addDoc(collection(db, ...path, `elections_${sId}`), { title: formData.title, position: formData.position, candidates: candidates, voters: [], status: 'Open', createdAt: serverTimestamp() });
-      } else if (modalState.type === 'amenity') {
+      } else if (type === 'amenity') {
         const finalFormData = { ...formData };
         if (finalFormData.name === 'Other') finalFormData.name = finalFormData.customName;
         await addDoc(collection(db, ...path, `amenities_${sId}`), finalFormData);
-      } else if (modalState.type === 'add_funds') {
+      } else if (type === 'add_funds') {
         const amount = parseFloat(formData.amount);
         await updateDoc(doc(db, ...path, 'societies', sId), { funds: increment(amount) });
         alert(`Added ₹${amount} via ${formData.fundType || 'Cash in Hand'}`);
-      } else if (modalState.type === 'classified') {
+      } else if (type === 'classified') {
         await addDoc(collection(db, ...path, `classifieds_${sId}`), { ...formData, ownerId: user.uid, ownerName: userData.fullName, contact: userData.email, createdAt: serverTimestamp() });
-      } else if (modalState.type === 'visitor_preapprove' || modalState.type === 'visitor_entry') {
+      } else if (type === 'visitor_preapprove' || type === 'visitor_entry') {
         const finalType = formData.type === 'Others' ? formData.customType : formData.type;
-        const visitorData = { ...formData, type: finalType, status: modalState.type === 'visitor_entry' ? 'Entered' : 'Expected', entryTime: modalState.type === 'visitor_entry' ? serverTimestamp() : null, hostId: modalState.type === 'visitor_preapprove' ? user.uid : formData.hostId, hostUnit: modalState.type === 'visitor_preapprove' ? userData.unitNumber : formData.hostUnit, createdBy: userData.fullName, createdAt: serverTimestamp() };
+        const visitorData = { ...formData, type: finalType, status: type === 'visitor_entry' ? 'Entered' : 'Expected', entryTime: type === 'visitor_entry' ? serverTimestamp() : null, hostId: type === 'visitor_preapprove' ? user.uid : formData.hostId, hostUnit: type === 'visitor_preapprove' ? userData.unitNumber : formData.hostUnit, createdBy: userData.fullName, createdAt: serverTimestamp() };
         await addDoc(collection(db, ...path, `visitors_${sId}`), visitorData);
-      } else if (modalState.type === 'pay_bill_online') {
+      } else if (type === 'pay_bill_online') {
+        // FIX: Ensure this block runs when called directly
         const { billIds, method, proof } = formData;
         const batchPromises = billIds.map(bid => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', `bills_${sId}`, bid), { status: 'Pending Verification', paymentMode: method, paymentProof: proof || 'No proof attached', paymentDate: serverTimestamp() }));
         await Promise.all(batchPromises);
         alert("Payment details submitted for verification.");
-      } else if (modalState.type === 'add_advance') {
+      } else if (type === 'add_advance') {
         const amount = parseFloat(formData.amount);
         await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile'), { advanceBalance: increment(amount) });
         await addDoc(collection(db, ...path, `bills_${sId}`), { title: 'Advance Payment', amount: amount, status: 'Paid', paymentMode: formData.method, userId: user.uid, unitNumber: userData.unitNumber, type: 'Credit', createdAt: serverTimestamp() });
@@ -1652,8 +1657,8 @@ export default function HumaraSocietyApp() {
                   if (formData.method === 'Cash') {
                     alert("Please pay cash to the Treasurer/Admin. They will update the status.");
                   } else {
-                    setModalState({ ...modalState, type: payload.type });
-                    handleSubmitModal();
+                    // Directly call submit handler with specific type
+                    handleSubmitModal(payload.type);
                   }
                 }}
                 className="w-full bg-emerald-600 text-white py-2 rounded"
@@ -1858,7 +1863,7 @@ export default function HumaraSocietyApp() {
             </>
           )}
 
-          <button onClick={handleSubmitModal} className="w-full bg-emerald-600 text-white py-2 rounded hover:bg-emerald-700 transition">Submit</button>
+          <button onClick={() => handleSubmitModal()} className="w-full bg-emerald-600 text-white py-2 rounded hover:bg-emerald-700 transition">Submit</button>
         </div>
       </Modal>
 
