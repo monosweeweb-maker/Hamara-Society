@@ -727,13 +727,16 @@ export default function HumaraSocietyApp() {
 
     safeSub(query(collection(db, ...path, `events_${sId}`), orderBy('date', 'asc')), setEvents);
     safeSub(query(collection(db, ...path, `complaints_${sId}`), orderBy('createdAt', 'desc')), setComplaints);
-    safeSub(query(collection(db, ...path, `bills_${sId}`), orderBy('dueDate', 'desc')), (snapshot) => {
+    // FIX: Bills listener - process data directly
+    const billsQuery = query(collection(db, ...path, `bills_${sId}`), orderBy('dueDate', 'desc'));
+    unsubs.push(onSnapshot(billsQuery, (snapshot) => {
       const allBills = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       setBills(allBills);
       if ([ROLES.ADMIN, ROLES.TREASURER].includes(userData.role)) {
         setPendingVerifications(allBills.filter(b => b.status === 'Pending Verification'));
       }
-    });
+    }));
+
     safeSub(collection(db, ...path, `amenities_${sId}`), setAmenities);
     safeSub(query(collection(db, ...path, `rentals_${sId}`), orderBy('createdAt', 'desc')), setRentals);
     safeSub(query(collection(db, ...path, `elections_${sId}`), orderBy('createdAt', 'desc')), setElections);
