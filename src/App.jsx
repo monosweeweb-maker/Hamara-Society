@@ -1312,7 +1312,7 @@ export default function HumaraSocietyApp() {
                         <div key={bill.id} className="p-4 border-b dark:border-slate-700 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-slate-700/50 transition">
                           <div>
                             <h4 className="font-bold dark:text-white">{bill.title}</h4>
-                            <p className="text-sm text-gray-500">Unit: {bill.unitNumber} • {bill.userName}</p>
+                            <p className="text-sm text-gray-500">Unit: <span className="font-bold bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-xs mr-1">{bill.unitNumber}</span> • {bill.userName}</p>
                             <p className="text-xs text-red-500">Due: {bill.dueDate} {bill.lateFeeApplied && "(Late Fee)"}</p>
                             {bill.status === 'Pending Verification' && <p className="text-xs text-yellow-600">Method: {bill.paymentMode}</p>}
                           </div>
@@ -1481,8 +1481,35 @@ export default function HumaraSocietyApp() {
                 <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border dark:border-slate-700 shadow-sm">
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="font-bold text-lg dark:text-white">Manage Society Units</h3>
-                    <button onClick={() => openModal('add_unit')} className="bg-emerald-600 text-white px-3 py-1.5 rounded text-sm hover:bg-emerald-700 transition flex items-center gap-2"><Plus size={16} /> Add Unit</button>
+                    <div className="flex gap-2">
+                      <button onClick={() => openModal('add_unit')} className="bg-emerald-600 text-white px-3 py-1.5 rounded text-sm hover:bg-emerald-700 transition flex items-center gap-2"><Plus size={16} /> Add Unit</button>
+                    </div>
                   </div>
+                  {/* Admin Unit Selection */}
+                  <div className="flex items-center gap-2 mb-4 bg-gray-50 dark:bg-slate-700 p-2 rounded">
+                    <span className="text-sm dark:text-white">My Unit:</span>
+                    <select
+                      className="p-1 border rounded dark:bg-slate-600 dark:text-white text-sm flex-1"
+                      value={formData.myUnit || userData.unitNumber || ''}
+                      onChange={(e) => setFormData({ ...formData, myUnit: e.target.value })}
+                    >
+                      <option value="">Select Unit</option>
+                      {societyData?.units?.map(u => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                    <button
+                      onClick={async () => {
+                        if (!formData.myUnit) return;
+                        await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'profile'), { unitNumber: formData.myUnit });
+                        // Update public profile too
+                        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid), { unitNumber: formData.myUnit });
+                        alert("Unit updated successfully!");
+                      }}
+                      className="bg-blue-600 text-white px-3 py-1 rounded text-xs hover:bg-blue-700"
+                    >
+                      Save
+                    </button>
+                  </div>
+
                   <div className="flex flex-wrap gap-2">
                     {societyData?.units?.length > 0 ? societyData.units.map(unit => (
                       <span key={unit} className="bg-gray-100 dark:bg-slate-700 text-gray-800 dark:text-gray-200 px-3 py-1 rounded-full text-sm flex items-center gap-2">
@@ -1746,7 +1773,7 @@ export default function HumaraSocietyApp() {
 
                     if (formData.method === 'Cash') {
                       alert("Please pay cash to the Treasurer/Admin. They will update the status.");
-                      // Submit payment request for admin to verify
+                      // Submit payment request for admin to verify even for cash
                       handleSubmitModal(payload.type);
                     } else {
                       handleSubmitModal(payload.type);
