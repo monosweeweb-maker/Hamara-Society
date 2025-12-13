@@ -1210,6 +1210,11 @@ export default function HumaraSocietyApp() {
                       <button onClick={() => openModal('set_maintenance')} className="bg-gray-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-gray-700 transition"><Settings size={16} /> Settings</button>
                       <button onClick={() => openModal('payment_settings')} className="bg-gray-800 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-gray-900 transition"><Settings size={16} /> Pay Settings</button>
                       <button onClick={calculateLateFees} className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-orange-700 transition"><Clock size={16} /> Apply Late Fees</button>
+                      <button onClick={() => openModal('recurring_expense')} className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-purple-700 transition"><Repeat size={16} /> Add Recurring</button>
+                      <button onClick={() => openModal('receive_bills')} className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm flex gap-2 hover:bg-indigo-700 transition relative">
+                        <CheckCircle size={16} /> Receive Bills
+                        {pendingVerifications.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center">{pendingVerifications.length}</span>}
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1655,23 +1660,39 @@ export default function HumaraSocietyApp() {
                 </div>
               )}
 
-              <button
-                onClick={() => {
-                  const payload = formData.isAdvance
-                    ? { type: 'add_advance' }
-                    : { type: 'pay_bill_online', billIds: formData.selectedBills.map(b => b.id), proof: 'Simulated_Screenshot.jpg' };
+              {formData.method && (
+                <div className="flex items-center gap-2 mt-4 p-3 bg-gray-50 dark:bg-slate-700 rounded border border-gray-200 dark:border-slate-600">
+                  <input
+                    type="checkbox"
+                    id="markAsPaid"
+                    checked={formData.paymentConfirmed || false}
+                    onChange={(e) => setFormData({ ...formData, paymentConfirmed: e.target.checked })}
+                    className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500"
+                  />
+                  <label htmlFor="markAsPaid" className="text-sm font-medium dark:text-white cursor-pointer">
+                    I have made the payment (Mark as Paid)
+                  </label>
+                </div>
+              )}
 
-                  if (formData.method === 'Cash') {
-                    alert("Please pay cash to the Treasurer/Admin. They will update the status.");
-                  } else {
-                    // Directly call submit handler with specific type
-                    handleSubmitModal(payload.type);
-                  }
-                }}
-                className="w-full bg-emerald-600 text-white py-2 rounded"
-              >
-                Mark as Paid
-              </button>
+              {formData.paymentConfirmed && (
+                <button
+                  onClick={() => {
+                    const payload = formData.isAdvance
+                      ? { type: 'add_advance' }
+                      : { type: 'pay_bill_online', billIds: formData.selectedBills.map(b => b.id), proof: 'Simulated_Screenshot.jpg' };
+
+                    if (formData.method === 'Cash') {
+                      alert("Please pay cash to the Treasurer/Admin. They will update the status.");
+                    } else {
+                      handleSubmitModal(payload.type);
+                    }
+                  }}
+                  className="w-full bg-emerald-600 text-white py-2 rounded mt-2 animate-fade-in-up"
+                >
+                  Submit Payment Details
+                </button>
+              )}
             </div>
           )}
           {modalState.type === 'set_maintenance' && (
@@ -1870,7 +1891,36 @@ export default function HumaraSocietyApp() {
             </>
           )}
 
-          <button onClick={() => handleSubmitModal()} className="w-full bg-emerald-600 text-white py-2 rounded hover:bg-emerald-700 transition">Submit</button>
+          {modalState.type === 'receive_bills' && (
+            <div className="space-y-4">
+              <h4 className="font-bold dark:text-white text-lg mb-2">Pending Payment Verifications</h4>
+              {pendingVerifications.length === 0 ? (
+                <p className="text-gray-500 text-sm text-center py-4">No pending bills to verify.</p>
+              ) : (
+                <div className="max-h-96 overflow-y-auto custom-scrollbar space-y-3">
+                  {pendingVerifications.map(bill => (
+                    <div key={bill.id} className="p-4 border rounded-lg bg-gray-50 dark:bg-slate-700 dark:border-slate-600">
+                      <div className="flex justify-between mb-2">
+                        <span className="font-bold text-sm dark:text-white">{bill.userName} ({bill.unitNumber})</span>
+                        <span className="text-emerald-600 font-bold">₹{bill.amount}</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mb-1">Via: {bill.paymentMode}</p>
+                      <p className="text-xs text-gray-500 mb-3">Date: {bill.paymentDate ? new Date(bill.paymentDate.seconds * 1000).toLocaleString() : 'N/A'}</p>
+                      <div className="flex gap-2 mt-3">
+                        <button onClick={() => handleVerifyPayment(bill, 'approve')} className="flex-1 bg-green-600 text-white py-1.5 rounded text-sm hover:bg-green-700">Approve / Receive</button>
+                        <button onClick={() => handleVerifyPayment(bill, 'reject')} className="flex-1 bg-red-600 text-white py-1.5 rounded text-sm hover:bg-red-700">Reject</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button onClick={closeModal} className="w-full border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 py-2 rounded hover:bg-gray-100 dark:hover:bg-slate-600 mt-2">Close</button>
+            </div>
+          )}
+
+          {modalState.type !== 'receive_bills' && modalState.type !== 'pay_mode' && (
+            <button onClick={() => handleSubmitModal()} className="w-full bg-emerald-600 text-white py-2 rounded hover:bg-emerald-700 transition">Submit</button>
+          )}
         </div>
       </Modal>
 
