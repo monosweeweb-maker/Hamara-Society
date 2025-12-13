@@ -282,10 +282,13 @@ const XIcon = ({ size = 24, className }) => (
 // --- EXTRACTED APP WRAPPER ---
 const AppWrapper = ({ children, darkMode }) => {
   useEffect(() => {
+    const root = document.documentElement;
     if (darkMode) {
-      document.documentElement.classList.add('dark');
+      root.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
     } else {
-      document.documentElement.classList.remove('dark');
+      root.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
     }
   }, [darkMode]);
 
@@ -619,7 +622,7 @@ const DashboardView = ({ userData, societyData, bills, complaints, setActiveTab 
 
 // --- Main Application Component ---
 export default function HumaraSocietyApp() {
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
   const [user, setUser] = useState(null);
   const [userData, setUserData] = useState(null);
   const [societyData, setSocietyData] = useState(null);
@@ -662,7 +665,7 @@ export default function HumaraSocietyApp() {
 
   // --- Init ---
   useEffect(() => {
-    signOut(auth).catch(console.error);
+    // signOut(auth).catch(console.error); // Do not force signout to persist login
     const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
       setUser(u);
       if (!u) { setUserData(null); setSocietyData(null); setShowCompleteProfile(false); }
@@ -951,7 +954,8 @@ export default function HumaraSocietyApp() {
       } else if (type === 'complaint') {
         await addDoc(collection(db, ...path, `complaints_${sId}`), { ...formData, userId: user.uid, userName: userData.fullName, unitNumber: userData.unitNumber, status: STATUS.OPEN, createdAt: serverTimestamp(), replies: [] });
       } else if (type === 'generate_monthly') {
-        if (!societyData?.maintenanceAmount) { alert("Please set Maintenance Amount in Settings first."); return; }
+        const amt = parseFloat(societyData.maintenanceAmount);
+        if (isNaN(amt) || amt <= 0) { alert("Please set a valid Maintenance Amount in Settings first."); return; }
         if (!formData.dueDate) { alert("Please select a Due Date."); return; }
         // CHECK: Ensure members exist
         if (!members || members.length === 0) { alert("No active members found to generate bills for."); return; }
@@ -960,7 +964,7 @@ export default function HumaraSocietyApp() {
         // FIX: Ensure batch promises are created correctly
         const batchPromises = members.map(m => addDoc(collection(db, ...path, `bills_${sId}`), {
           title: title,
-          amount: parseFloat(societyData.maintenanceAmount),
+          amount: amt,
           dueDate: formData.dueDate,
           status: 'Unpaid',
           userId: m.uid,
