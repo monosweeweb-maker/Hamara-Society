@@ -986,7 +986,7 @@ export default function HumaraSocietyApp() {
         await addDoc(collection(db, ...path, `expenses_${sId}`), expenseData);
 
         if (formData.isRecurring) {
-          await addDoc(collection(db, ...path, `recurring_${sId}`), { title: expenseData.title, amount: expenseData.amount, frequency: 'Monthly', type: finalType });
+          await addDoc(collection(db, ...path, `recurring_${sId}`), { title: expenseData.title, amount: expenseData.amount, frequency: formData.frequency || 'Monthly', type: finalType });
         }
 
         if (formData.deductFromSociety) {
@@ -1083,6 +1083,11 @@ export default function HumaraSocietyApp() {
 
   const isAdmin = [ROLES.ADMIN, ROLES.TREASURER].includes(userData.role);
   const isSecurity = [ROLES.SECURITY, ROLES.STAFF].includes(userData.role);
+
+  // Helper for Settings - Society Profile Cascading Dropdowns
+  const countries = Object.keys(LOCATION_DATA);
+  const states = formData.country ? Object.keys(LOCATION_DATA[formData.country] || {}) : [];
+  const cities = formData.state ? (LOCATION_DATA[formData.country]?.[formData.state] || []) : [];
 
   return (
     <AppWrapper darkMode={darkMode}>
@@ -1289,12 +1294,12 @@ export default function HumaraSocietyApp() {
               <div className="space-y-6">
                 <h2 className="text-xl font-bold dark:text-white">Admin Settings</h2>
 
-                {/* Society Profile Settings */}
+                {/* Society Profile Settings - UPDATED TO MATCH SIGNUP FORM */}
                 <div className="bg-white dark:bg-slate-800 p-6 rounded-xl border dark:border-slate-700 shadow-sm">
                   <div className="flex justify-between items-start mb-4">
                     <div>
                       <h3 className="font-bold text-lg dark:text-white">Society Profile</h3>
-                      <p className="text-sm text-gray-500">Update location and society details.</p>
+                      <p className="text-sm text-gray-500">Update location and society details. Once locked, cannot be edited.</p>
                     </div>
                     {societyData?.lockedDetails ? <Lock className="text-red-500" size={20} /> : <Edit3 className="text-gray-400" size={20} />}
                   </div>
@@ -1312,24 +1317,78 @@ export default function HumaraSocietyApp() {
 
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="text-xs text-gray-500">City</label>
-                        {societyData?.lockedDetails ? <p className="font-medium dark:text-white">{societyData.address?.city || 'N/A'}</p> :
-                          <input className="w-full p-2 border rounded dark:bg-slate-600 dark:text-white text-sm" defaultValue={societyData?.address?.city} onChange={e => setFormData({ ...formData, city: e.target.value })} />}
+                        <label className="text-xs text-gray-500">Country</label>
+                        {societyData?.lockedDetails ? (
+                          <p className="font-medium dark:text-white">{societyData.address?.country || 'N/A'}</p>
+                        ) : (
+                          <select
+                            className="w-full p-2 border rounded dark:bg-slate-600 dark:text-white text-sm"
+                            onChange={e => setFormData({ ...formData, country: e.target.value, state: '', city: '' })}
+                            value={formData.country || societyData?.address?.country || ''}
+                          >
+                            <option value="">Select Country</option>
+                            {countries.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                        )}
                       </div>
                       <div>
                         <label className="text-xs text-gray-500">State</label>
-                        {societyData?.lockedDetails ? <p className="font-medium dark:text-white">{societyData.address?.state || 'N/A'}</p> :
-                          <input className="w-full p-2 border rounded dark:bg-slate-600 dark:text-white text-sm" defaultValue={societyData?.address?.state} onChange={e => setFormData({ ...formData, state: e.target.value })} />}
+                        {societyData?.lockedDetails ? (
+                          <p className="font-medium dark:text-white">{societyData.address?.state || 'N/A'}</p>
+                        ) : (
+                          <select
+                            className="w-full p-2 border rounded dark:bg-slate-600 dark:text-white text-sm"
+                            onChange={e => setFormData({ ...formData, state: e.target.value, city: '' })}
+                            disabled={!formData.country && !societyData?.address?.country}
+                            value={formData.state || societyData?.address?.state || ''}
+                          >
+                            <option value="">Select State</option>
+                            {(formData.country ? (LOCATION_DATA[formData.country] ? Object.keys(LOCATION_DATA[formData.country]) : []) : (societyData?.address?.country ? Object.keys(LOCATION_DATA[societyData.address.country]) : [])).map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        )}
                       </div>
                       <div>
-                        <label className="text-xs text-gray-500">Country</label>
-                        {societyData?.lockedDetails ? <p className="font-medium dark:text-white">{societyData.address?.country || 'N/A'}</p> :
-                          <input className="w-full p-2 border rounded dark:bg-slate-600 dark:text-white text-sm" defaultValue={societyData?.address?.country} onChange={e => setFormData({ ...formData, country: e.target.value })} />}
+                        <label className="text-xs text-gray-500">City</label>
+                        {societyData?.lockedDetails ? (
+                          <p className="font-medium dark:text-white">{societyData.address?.city || 'N/A'}</p>
+                        ) : (
+                          <select
+                            className="w-full p-2 border rounded dark:bg-slate-600 dark:text-white text-sm"
+                            onChange={e => setFormData({ ...formData, city: e.target.value })}
+                            value={formData.city || societyData?.address?.city || ''}
+                          >
+                            <option value="">Select City</option>
+                            {(formData.state && formData.country ? (LOCATION_DATA[formData.country]?.[formData.state] || []) : (societyData?.address?.country && societyData?.address?.state ? (LOCATION_DATA[societyData.address.country]?.[societyData.address.state] || []) : [])).map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                        )}
                       </div>
                       <div>
                         <label className="text-xs text-gray-500">Pincode</label>
-                        {societyData?.lockedDetails ? <p className="font-medium dark:text-white">{societyData.address?.pincode || 'N/A'}</p> :
-                          <input className="w-full p-2 border rounded dark:bg-slate-600 dark:text-white text-sm" defaultValue={societyData?.address?.pincode} onChange={e => setFormData({ ...formData, pincode: e.target.value })} />}
+                        {societyData?.lockedDetails ? (
+                          <p className="font-medium dark:text-white">{societyData.address?.pincode || 'N/A'}</p>
+                        ) : (
+                          <input
+                            className="w-full p-2 border rounded dark:bg-slate-600 dark:text-white text-sm"
+                            defaultValue={societyData?.address?.pincode}
+                            onChange={e => setFormData({ ...formData, pincode: e.target.value })}
+                            placeholder="Enter Pincode"
+                          />
+                        )}
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500">Society Type</label>
+                        {societyData?.lockedDetails ? (
+                          <p className="font-medium dark:text-white">{societyData.address?.type || 'N/A'}</p>
+                        ) : (
+                          <select
+                            className="w-full p-2 border rounded dark:bg-slate-600 dark:text-white text-sm"
+                            onChange={e => setFormData({ ...formData, societyType: e.target.value })}
+                            value={formData.societyType || societyData?.address?.type || ''}
+                          >
+                            <option value="">Select Type</option>
+                            {SOCIETY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                        )}
                       </div>
                     </div>
 
